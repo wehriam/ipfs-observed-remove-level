@@ -1,7 +1,7 @@
 //      
 
 const { inflate, deflate } = require('pako');
-const ObservedRemoveMap = require('observed-remove/dist/map');
+const ObservedRemoveMap = require('observed-remove-level/dist/map');
 const stringify = require('json-stringify-deterministic');
 
                 
@@ -14,7 +14,7 @@ const stringify = require('json-stringify-deterministic');
 
 const notSubscribedRegex = /Not subscribed/;
 
-class IpfsObservedRemoveMap       extends ObservedRemoveMap       { // eslint-disable-line no-unused-vars
+class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-line no-unused-vars
   /**
    * Create an observed-remove CRDT.
    * @param {Object} [ipfs] Object implementing the [core IPFS API](https://github.com/ipfs/interface-ipfs-core#api), most likely a [js-ipfs](https://github.com/ipfs/js-ipfs) or [ipfs-http-client](https://github.com/ipfs/js-ipfs-http-client) object.
@@ -24,8 +24,9 @@ class IpfsObservedRemoveMap       extends ObservedRemoveMap       { // eslint-di
    * @param {String} [options.maxAge=5000] Max age of insertion/deletion identifiers
    * @param {String} [options.bufferPublishing=20] Interval by which to buffer 'publish' events
    */
-  constructor(ipfs       , topic       , entries                   , options          = {}) {
-    super(entries, options);
+  constructor(db       , ipfs       , topic       , entries                        , options          = {}) {
+    super(db, entries, options);
+    this.db = db;
     this.ipfs = ipfs;
     this.topic = topic;
     this.active = true;
@@ -56,14 +57,15 @@ class IpfsObservedRemoveMap       extends ObservedRemoveMap       { // eslint-di
                                                                                 
                              
                           
+             
 
   /**
    * Return a sorted array containing all of the set's insertions and deletions.
    * @return {[Array<*>, Array<*>]>}
    */
-  dump() {
-    this.flush();
-    const [insertQueue, deleteQueue] = super.dump();
+  async dump() {
+    await this.flush();
+    const [insertQueue, deleteQueue] = await super.dump();
     deleteQueue.sort((x, y) => (x[0] > y[0] ? -1 : 1));
     insertQueue.sort((x, y) => (x[1][0] > y[1][0] ? -1 : 1));
     return [insertQueue, deleteQueue];
@@ -73,7 +75,7 @@ class IpfsObservedRemoveMap       extends ObservedRemoveMap       { // eslint-di
     try {
       const files = await this.ipfs.get(hash);
       const queue = JSON.parse(files[0].content.toString('utf8'));
-      this.process(queue);
+      await this.process(queue);
     } catch (error) {
       if (this.listenerCount('error') > 0) {
         this.emit('error', error);
@@ -150,7 +152,7 @@ class IpfsObservedRemoveMap       extends ObservedRemoveMap       { // eslint-di
    * @return {Promise<string>}
    */
   async getIpfsHash()                 {
-    const data = this.dump();
+    const data = await this.dump();
     const files = await this.ipfs.add(Buffer.from(stringify(data)));
     return files[0].hash;
   }
@@ -221,7 +223,7 @@ class IpfsObservedRemoveMap       extends ObservedRemoveMap       { // eslint-di
     }
     try {
       const queue = JSON.parse(Buffer.from(inflate(message.data)).toString('utf8'));
-      this.process(queue);
+      await this.process(queue);
     } catch (error) {
       if (this.listenerCount('error') > 0) {
         this.emit('error', error);
@@ -255,7 +257,7 @@ class IpfsObservedRemoveMap       extends ObservedRemoveMap       { // eslint-di
         return;
       }
       const queue = JSON.parse(remoteFiles[0].content.toString('utf8'));
-      this.process(queue);
+      await this.process(queue);
       const afterHash = await this.getIpfsHash();
       if (this.active && beforeHash !== afterHash && afterHash !== remoteHash) {
         await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(afterHash, 'utf8'));

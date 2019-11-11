@@ -1,21 +1,30 @@
 // @flow
 
+const os = require('os');
+const path = require('path');
 const uuid = require('uuid');
+const level = require('level');
 const { getSwarm, closeAllNodes } = require('./lib/ipfs');
 const { IpfsObservedRemoveMap } = require('../src');
 const { generateValue } = require('./lib/values');
 const expect = require('expect');
+require('./lib/async-iterator-comparison');
 
 jest.setTimeout(30000);
 
 let nodes = [];
 
 describe('IPFS Map', () => {
+  let db;
+
   beforeAll(async () => {
     nodes = await getSwarm(2);
+    const location = path.join(os.tmpdir(), uuid.v4());
+    db = level(location, { valueEncoding: 'json' });
   });
 
   afterAll(async () => {
+    await db.close();
     await closeAllNodes();
   });
 
@@ -28,18 +37,19 @@ describe('IPFS Map', () => {
     const valueA = generateValue();
     const valueB = generateValue();
     const valueC = generateValue();
-    const alice = new IpfsObservedRemoveMap(nodes[0], topicA, [[keyA, valueA], [keyB, valueB], [keyC, valueC]]);
+    const alice = new IpfsObservedRemoveMap(db, nodes[0], topicA, [[keyA, valueA], [keyB, valueB], [keyC, valueC]], { namespace: uuid.v4() });
     await alice.readyPromise;
     const hash = await alice.getIpfsHash();
-    const bob = new IpfsObservedRemoveMap(nodes[0], topicB);
+    const bob = new IpfsObservedRemoveMap(db, nodes[0], topicB, [], { namespace: uuid.v4() });
     await bob.readyPromise;
     await bob.loadIpfsHash(hash);
-    expect(bob.get(keyA)).toEqual(valueA);
-    expect(bob.get(keyB)).toEqual(valueB);
-    expect(bob.get(keyC)).toEqual(valueC);
+    await expect(bob.get(keyA)).resolves.toEqual(valueA);
+    await expect(bob.get(keyB)).resolves.toEqual(valueB);
+    await expect(bob.get(keyC)).resolves.toEqual(valueC);
     await alice.shutdown();
-    bob.shutdown();
+    await bob.shutdown();
   });
+
 
   test('Synchronize maps', async () => {
     const topic = uuid.v4();
@@ -49,8 +59,8 @@ describe('IPFS Map', () => {
     const valueX = generateValue();
     const valueY = generateValue();
     const valueZ = generateValue();
-    const alice: IpfsObservedRemoveMap<string, Object> = new IpfsObservedRemoveMap(nodes[0], topic);
-    const bob: IpfsObservedRemoveMap<string, Object> = new IpfsObservedRemoveMap(nodes[1], topic);
+    const alice: IpfsObservedRemoveMap<Object> = new IpfsObservedRemoveMap(db, nodes[0], topic, [], { namespace: uuid.v4() });
+    const bob: IpfsObservedRemoveMap<Object> = new IpfsObservedRemoveMap(db, nodes[1], topic, [], { namespace: uuid.v4() });
     await Promise.all([alice.readyPromise, bob.readyPromise]);
     let aliceAddCount = 0;
     let bobAddCount = 0;
@@ -60,37 +70,38 @@ describe('IPFS Map', () => {
     bob.on('set', () => (bobAddCount += 1));
     alice.on('delete', () => (aliceDeleteCount += 1));
     bob.on('delete', () => (bobDeleteCount += 1));
-    alice.set(keyX, valueX);
-    alice.set(keyY, valueY);
-    alice.set(keyZ, valueZ);
+    await alice.set(keyX, valueX);
+    await alice.set(keyY, valueY);
+    await alice.set(keyZ, valueZ);
     while (aliceAddCount !== 3 || bobAddCount !== 3) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    expect(alice.get(keyX)).toEqual(valueX);
-    expect(alice.get(keyY)).toEqual(valueY);
-    expect(alice.get(keyZ)).toEqual(valueZ);
-    expect(bob.get(keyX)).toEqual(valueX);
-    expect(bob.get(keyY)).toEqual(valueY);
-    expect(bob.get(keyZ)).toEqual(valueZ);
-    expect([...alice]).toEqual([[keyX, valueX], [keyY, valueY], [keyZ, valueZ]]);
-    expect([...bob]).toEqual([[keyX, valueX], [keyY, valueY], [keyZ, valueZ]]);
-    bob.delete(keyX);
-    bob.delete(keyY);
-    bob.delete(keyZ);
+    await expect(alice.get(keyX)).resolves.toEqual(valueX);
+    await expect(alice.get(keyY)).resolves.toEqual(valueY);
+    await expect(alice.get(keyZ)).resolves.toEqual(valueZ);
+    await expect(bob.get(keyX)).resolves.toEqual(valueX);
+    await expect(bob.get(keyY)).resolves.toEqual(valueY);
+    await expect(bob.get(keyZ)).resolves.toEqual(valueZ);
+    await expect(alice).asyncIteratesTo(expect.arrayContaining([[keyX, valueX], [keyY, valueY], [keyZ, valueZ]]));
+    await expect(bob).asyncIteratesTo(expect.arrayContaining([[keyX, valueX], [keyY, valueY], [keyZ, valueZ]]));
+    await bob.delete(keyX);
+    await bob.delete(keyY);
+    await bob.delete(keyZ);
     while (aliceDeleteCount !== 3 || bobDeleteCount !== 3) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    expect(alice.get(keyX)).toBeUndefined();
-    expect(alice.get(keyY)).toBeUndefined();
-    expect(alice.get(keyZ)).toBeUndefined();
-    expect(bob.get(keyX)).toBeUndefined();
-    expect(bob.get(keyY)).toBeUndefined();
-    expect(bob.get(keyZ)).toBeUndefined();
-    expect([...alice]).toEqual([]);
-    expect([...bob]).toEqual([]);
+    await expect(alice.get(keyX)).resolves.toBeUndefined();
+    await expect(alice.get(keyY)).resolves.toBeUndefined();
+    await expect(alice.get(keyZ)).resolves.toBeUndefined();
+    await expect(bob.get(keyX)).resolves.toBeUndefined();
+    await expect(bob.get(keyY)).resolves.toBeUndefined();
+    await expect(bob.get(keyZ)).resolves.toBeUndefined();
+    await expect(alice).asyncIteratesTo([]);
+    await expect(bob).asyncIteratesTo([]);
     await alice.shutdown();
-    bob.shutdown();
+    await bob.shutdown();
   });
+
 
   test('Synchronize set and delete events', async () => {
     const topic = uuid.v4();
@@ -98,8 +109,8 @@ describe('IPFS Map', () => {
     const keyY = uuid.v4();
     const valueX = generateValue();
     const valueY = generateValue();
-    const alice = new IpfsObservedRemoveMap(nodes[0], topic);
-    const bob = new IpfsObservedRemoveMap(nodes[1], topic);
+    const alice = new IpfsObservedRemoveMap(db, nodes[0], topic, [], { namespace: uuid.v4() });
+    const bob = new IpfsObservedRemoveMap(db, nodes[1], topic, [], { namespace: uuid.v4() });
     await Promise.all([alice.readyPromise, bob.readyPromise]);
     const aliceSetXPromise = new Promise((resolve) => {
       alice.once('set', (key, value) => {
@@ -115,9 +126,9 @@ describe('IPFS Map', () => {
         resolve();
       });
     });
-    bob.set(keyX, valueX);
+    await bob.set(keyX, valueX);
     await aliceSetXPromise;
-    bob.delete(keyX);
+    await bob.delete(keyX);
     await aliceDeleteXPromise;
     const bobSetYPromise = new Promise((resolve) => {
       bob.once('set', (key, value) => {
@@ -133,12 +144,12 @@ describe('IPFS Map', () => {
         resolve();
       });
     });
-    alice.set(keyY, valueY);
+    await alice.set(keyY, valueY);
     await bobSetYPromise;
-    alice.delete(keyY);
+    await alice.delete(keyY);
     await bobDeleteYPromise;
     await alice.shutdown();
-    bob.shutdown();
+    await bob.shutdown();
   });
 
   test('Synchronize mixed maps using sync', async () => {
@@ -155,13 +166,13 @@ describe('IPFS Map', () => {
     const valueX = generateValue();
     const valueY = generateValue();
     const valueZ = generateValue();
-    const alice = new IpfsObservedRemoveMap(nodes[0], topic, [[keyA, valueA], [keyB, valueB], [keyC, valueC]]);
+    const alice = new IpfsObservedRemoveMap(db, nodes[0], topic, [[keyA, valueA], [keyB, valueB], [keyC, valueC]]);
     await alice.readyPromise;
-    const bob = new IpfsObservedRemoveMap(nodes[1], topic, [[keyX, valueX], [keyY, valueY], [keyZ, valueZ]]);
+    const bob = new IpfsObservedRemoveMap(db, nodes[1], topic, [[keyX, valueX], [keyY, valueY], [keyZ, valueZ]]);
     await bob.readyPromise;
     await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(alice.dump()).toEqual(bob.dump());
+    await expect(alice.dump()).resolves.toEqual(await bob.dump());
     await alice.shutdown();
-    bob.shutdown();
+    await bob.shutdown();
   });
 });

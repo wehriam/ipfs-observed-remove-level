@@ -1,6 +1,9 @@
 // @flow
 
+const os = require('os');
+const path = require('path');
 const uuid = require('uuid');
+const level = require('level');
 const stringify = require('json-stringify-deterministic');
 const { getSwarm, closeAllNodes } = require('./lib/ipfs');
 const { IpfsObservedRemoveMap } = require('../src');
@@ -12,11 +15,16 @@ const COUNT = 10;
 let nodes = [];
 
 describe('Map Scale', () => {
+  let db;
+
   beforeAll(async () => {
     nodes = await getSwarm(COUNT);
+    const location = path.join(os.tmpdir(), uuid.v4());
+    db = level(location, { valueEncoding: 'json' });
   });
 
   afterAll(async () => {
+    await db.close();
     await closeAllNodes();
   });
 
@@ -35,7 +43,7 @@ describe('Map Scale', () => {
     const bDeletePromises = [];
     const cDeletePromises = [];
     const maps = nodes.map((node) => {
-      const map = new IpfsObservedRemoveMap(node, topic);
+      const map = new IpfsObservedRemoveMap(db, node, topic, [], { namespace: uuid.v4() });
       aMapPromises.push(new Promise((resolve) => {
         const handler = (key, value) => {
           if (key === keyA && stringify(value) === stringify(valueA)) {
@@ -94,30 +102,30 @@ describe('Map Scale', () => {
     });
     const randomMap = () => maps[Math.floor(Math.random() * maps.length)];
     await Promise.all(maps.map((map) => map.readyPromise));
-    randomMap().set(keyA, valueA);
+    await randomMap().set(keyA, valueA);
     await Promise.all(aMapPromises);
-    randomMap().set(keyB, valueB);
+    await randomMap().set(keyB, valueB);
     await Promise.all(bMapPromises);
-    randomMap().set(keyC, valueC);
+    await randomMap().set(keyC, valueC);
     await Promise.all(cMapPromises);
-    randomMap().delete(keyA);
+    await randomMap().delete(keyA);
     await Promise.all(aDeletePromises);
-    randomMap().delete(keyB);
+    await randomMap().delete(keyB);
     await Promise.all(bDeletePromises);
-    randomMap().delete(keyC);
+    await randomMap().delete(keyC);
     await Promise.all(cDeletePromises);
     await Promise.all(maps.map((map) => map.shutdown()));
   });
 
   test(`Synchronizes ${COUNT} maps automatically`, async () => {
     const topic = uuid.v4();
-    const maps = [new IpfsObservedRemoveMap(nodes[0], topic, [[uuid.v4(), generateValue()]])];
+    const maps = [new IpfsObservedRemoveMap(db, nodes[0], topic, [[uuid.v4(), generateValue()]], { namespace: uuid.v4() })];
     await maps[0].readyPromise;
-    const setPromises = [];
+    const mapPromises = [];
     for (let i = 1; i < nodes.length; i += 1) {
-      const map = new IpfsObservedRemoveMap(nodes[i], topic);
+      const map = new IpfsObservedRemoveMap(db, nodes[i], topic, [], { namespace: uuid.v4() });
       maps.push(map);
-      setPromises.push(new Promise((resolve) => {
+      mapPromises.push(new Promise((resolve) => {
         const handler = () => {
           map.removeListener('set', handler);
           resolve();
@@ -125,11 +133,11 @@ describe('Map Scale', () => {
         map.on('set', handler);
       }));
     }
-    await Promise.all(maps.map((set) => set.readyPromise));
-    await Promise.all(setPromises);
-    const dump = maps[0].dump();
+    await Promise.all(maps.map((map) => map.readyPromise));
+    await Promise.all(mapPromises);
+    const dump = await maps[0].dump();
     for (let i = 1; i < maps.length; i += 1) {
-      expect(maps[i].dump()).toEqual(dump);
+      expect(maps[i].dump()).resolves.toEqual(dump);
     }
     await Promise.all(maps.map((map) => map.shutdown()));
   });
