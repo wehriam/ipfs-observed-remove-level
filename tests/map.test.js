@@ -166,12 +166,15 @@ describe('IPFS Map', () => {
     const valueX = generateValue();
     const valueY = generateValue();
     const valueZ = generateValue();
-    const alice = new IpfsObservedRemoveMap(db, nodes[0], topic, [[keyA, valueA], [keyB, valueB], [keyC, valueC]]);
+    const alice = new IpfsObservedRemoveMap(db, nodes[0], topic, [[keyA, valueA], [keyB, valueB], [keyC, valueC]], { namespace: uuid.v4(), bufferPublishing: 10000 });
     await alice.readyPromise;
-    const bob = new IpfsObservedRemoveMap(db, nodes[1], topic, [[keyX, valueX], [keyY, valueY], [keyZ, valueZ]]);
+    const bob = new IpfsObservedRemoveMap(db, nodes[1], topic, [[keyX, valueX], [keyY, valueY], [keyZ, valueZ]], { namespace: uuid.v4(), bufferPublishing: 10000 });
     await bob.readyPromise;
     await new Promise((resolve) => setTimeout(resolve, 500));
     await expect(alice.dump()).resolves.toEqual(await bob.dump());
+    await expect(alice.getIpfsHash()).resolves.toEqual(await bob.getIpfsHash());
+    clearTimeout(alice.publishTimeout);
+    clearTimeout(bob.publishTimeout);
     await alice.shutdown();
     await bob.shutdown();
   });

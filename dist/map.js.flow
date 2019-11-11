@@ -1,8 +1,11 @@
 // @flow
 
 const { inflate, deflate } = require('pako');
+const { Readable } = require('stream');
 const ObservedRemoveMap = require('observed-remove-level/dist/map');
 const stringify = require('json-stringify-deterministic');
+const { parser: jsonStreamParser } = require('stream-json/Parser');
+const { streamArray: jsonStreamArray } = require('stream-json/streamers/StreamArray');
 
 type Options = {
   maxAge?:number,
@@ -152,9 +155,120 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
    * @return {Promise<string>}
    */
   async getIpfsHash():Promise<string> {
-    const data = await this.dump();
-    const files = await this.ipfs.add(Buffer.from(stringify(data)));
-    return files[0].hash;
+    await this.flush();
+    const length = Buffer.from(`${this.namespace}>`).length;
+    const openBuffer = Buffer.from('["');
+    const midBuffer = Buffer.from('",');
+    const closeBuffer = Buffer.from(']');
+    const commaBuffer = Buffer.from(',');
+    const pairIterator = this.db.db.db.iterator({
+      gt: Buffer.from(`${this.namespace}>`),
+      lt: Buffer.from(`${this.namespace}?`),
+      keyAsBuffer: true,
+      valueAsBuffer: true,
+    });
+    const deletionIterator = this.db.db.db.iterator({
+      gt: Buffer.from(`${this.namespace}<`),
+      lt: Buffer.from(`${this.namespace}=`),
+      keyAsBuffer: true,
+      valueAsBuffer: true,
+    });
+    let isReading = false;
+    let didWritePairs = false;
+    let didWriteDeletions = false;
+    let skipPairComma = true;
+    let skipDeletionComma = true;
+    const stream = new Readable({
+      async read() {
+        if (isReading) {
+          return;
+        }
+        isReading = true;
+        if (!didWritePairs) {
+          const getKeyPair = (resolve) => {
+            pairIterator.next((error:Error | void, k: Buffer | void, v: Buffer | void) => {
+              if (error) {
+                didWritePairs = true;
+                didWriteDeletions = true;
+                process.nextTick(() => this.emit('error', error));
+                resolve([undefined, undefined]);
+              } else {
+                resolve([k, v]);
+              }
+            });
+          };
+          while (true) {
+            const [key, pair] = await new Promise(getKeyPair);
+            if (key && pair) {
+              let buffer;
+              if (skipPairComma) {
+                skipPairComma = false;
+                buffer = Buffer.concat([openBuffer, key.slice(length), midBuffer, pair, closeBuffer]);
+              } else {
+                buffer = Buffer.concat([commaBuffer, openBuffer, key.slice(length), midBuffer, pair, closeBuffer]);
+              }
+              const shouldPush = this.push(buffer);
+              if (!shouldPush) {
+                console.log({ shouldPush });
+                return;
+              }
+            } else {
+              break;
+            }
+          }
+          this.push(Buffer.from('],['));
+          didWritePairs = true;
+        }
+        if (!didWriteDeletions) {
+          const getKeyPair = (resolve) => {
+            deletionIterator.next((error:Error | void, k: Buffer | void, v: Buffer | void) => {
+              if (error) {
+                didWritePairs = true;
+                didWriteDeletions = true;
+                process.nextTick(() => this.emit('error', error));
+                resolve([undefined, undefined]);
+              } else {
+                resolve([k, v]);
+              }
+            });
+          };
+          while (true) {
+            const [id, key] = await new Promise(getKeyPair);
+            if (id && key) {
+              if (skipDeletionComma) {
+                skipDeletionComma = false;
+              } else {
+                this.push(commaBuffer);
+              }
+              this.push(openBuffer);
+              this.push(id.slice(length));
+              this.push(midBuffer);
+              this.push(key);
+              this.push(closeBuffer);
+            } else {
+              break;
+            }
+          }
+          didWriteDeletions = true;
+        }
+        this.push(Buffer.from(']]'));
+        this.push(null);
+        await new Promise((resolve, reject) => {
+          pairIterator.end((error:Error | void) => {
+            if (error) {
+              reject(error);
+            } else {
+              resolve();
+            }
+          });
+        });
+        isReading = false;
+      },
+    });
+    stream.push(Buffer.from('[['));
+    const resultPromise = this.ipfs.addFromStream(stream, { wrapWithDirectory: false, recursive: false, pin: false });
+    const result = await resultPromise;
+    return result[0].hash;
   }
 
   /**
@@ -251,13 +365,56 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
         this.processingHash = false;
         return;
       }
-      const remoteFiles = await this.ipfs.get(remoteHash);
-      if (!remoteFiles.length === 0) {
-        this.processingHash = false;
-        return;
-      }
-      const queue = JSON.parse(remoteFiles[0].content.toString('utf8'));
-      await this.process(queue);
+      const stream = this.ipfs.catReadableStream(remoteHash);
+      const parser = jsonStreamParser();
+      const streamArray = jsonStreamArray();
+      const pipeline = stream.pipe(parser);
+      let arrayDepth = 0;
+      let streamState = 0;
+      let insertions = [];
+      let deletions = [];
+      streamArray.on('data', ({ value }) => {
+        if (streamState === 1) {
+          insertions.push(value);
+        } else if (streamState === 3) {
+          deletions.push(value);
+        }
+        if (insertions.length + deletions.length < 1000) {
+          return;
+        }
+        const i = insertions;
+        const d = deletions;
+        insertions = [];
+        deletions = [];
+        this.process([i, d]);
+      });
+      await new Promise((resolve, reject) => {
+        pipeline.on('error', (error) => {
+          reject(error);
+        });
+        pipeline.on('end', () => {
+          resolve();
+        });
+        pipeline.on('data', (data) => {
+          const { name } = data;
+          if (name === 'startArray') {
+            arrayDepth += 1;
+            if (arrayDepth === 2) {
+              streamState += 1;
+            }
+          }
+          if (streamState === 1 || streamState === 3) {
+            streamArray.write(data);
+          }
+          if (name === 'endArray') {
+            if (arrayDepth === 2) {
+              streamState += 1;
+            }
+            arrayDepth -= 1;
+          }
+        });
+      });
+      await this.process([insertions, deletions]);
       const afterHash = await this.getIpfsHash();
       if (this.active && beforeHash !== afterHash && afterHash !== remoteHash) {
         await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(afterHash, 'utf8'));
