@@ -28,29 +28,6 @@ describe('IPFS Map', () => {
     await closeAllNodes();
   });
 
-  test('Load from a hash', async () => {
-    const topicA = uuid.v4();
-    const topicB = uuid.v4();
-    const keyA = uuid.v4();
-    const keyB = uuid.v4();
-    const keyC = uuid.v4();
-    const valueA = generateValue();
-    const valueB = generateValue();
-    const valueC = generateValue();
-    const alice = new IpfsObservedRemoveMap(db, nodes[0], topicA, [[keyA, valueA], [keyB, valueB], [keyC, valueC]], { namespace: uuid.v4() });
-    await alice.readyPromise;
-    const hash = await alice.getIpfsHash();
-    const bob = new IpfsObservedRemoveMap(db, nodes[0], topicB, [], { namespace: uuid.v4() });
-    await bob.readyPromise;
-    await bob.loadIpfsHash(hash);
-    await expect(bob.get(keyA)).resolves.toEqual(valueA);
-    await expect(bob.get(keyB)).resolves.toEqual(valueB);
-    await expect(bob.get(keyC)).resolves.toEqual(valueC);
-    await alice.shutdown();
-    await bob.shutdown();
-  });
-
-
   test('Synchronize maps', async () => {
     const topic = uuid.v4();
     const keyX = uuid.v4();
@@ -166,11 +143,11 @@ describe('IPFS Map', () => {
     const valueX = generateValue();
     const valueY = generateValue();
     const valueZ = generateValue();
-    const alice = new IpfsObservedRemoveMap(db, nodes[0], topic, [[keyA, valueA], [keyB, valueB], [keyC, valueC]], { namespace: uuid.v4(), bufferPublishing: 10000 });
-    await alice.readyPromise;
-    const bob = new IpfsObservedRemoveMap(db, nodes[1], topic, [[keyX, valueX], [keyY, valueY], [keyZ, valueZ]], { namespace: uuid.v4(), bufferPublishing: 10000 });
-    await bob.readyPromise;
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    const alice = new IpfsObservedRemoveMap(db, nodes[0], topic, [[keyA, valueA], [keyB, valueB], [keyC, valueC]], { namespace: uuid.v4(), bufferPublishing: 30000 });
+    const bob = new IpfsObservedRemoveMap(db, nodes[1], topic, [[keyX, valueX], [keyY, valueY], [keyZ, valueZ]], { namespace: uuid.v4(), bufferPublishing: 30000 });
+    await Promise.all([bob.readyPromise, alice.readyPromise]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await Promise.all([alice, bob].map((map) => map.syncQueue.onIdle()));
     await expect(alice.dump()).resolves.toEqual(await bob.dump());
     await expect(alice.getIpfsHash()).resolves.toEqual(await bob.getIpfsHash());
     clearTimeout(alice.publishTimeout);

@@ -6,6 +6,7 @@ const ObservedRemoveMap = require('observed-remove-level/dist/map');
 const stringify = require('json-stringify-deterministic');
 const { parser: jsonStreamParser } = require('stream-json/Parser');
 const { streamArray: jsonStreamArray } = require('stream-json/streamers/StreamArray');
+const { default: PQueue } = require('p-queue');
 
                 
                  
@@ -37,8 +38,9 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
     this.boundHandleQueueMessage = this.handleQueueMessage.bind(this);
     this.boundHandleHashMessage = this.handleHashMessage.bind(this);
     this.boundHandleJoinMessage = this.handleJoinMessage.bind(this);
-    this.readyPromise = this.initializeIpfs();
-    this.processingHash = false;
+    this.readyPromise = this.init();
+    this.syncQueue = new PQueue({ concurrency: 1 });
+    this.remoteHashes = new Set();
   }
 
   /**
@@ -58,37 +60,19 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
                                                                                  
                                                                                 
                                                                                 
-                             
-                          
              
+                      
+                    
+                                           
+                                        
+                            
 
-  /**
-   * Return a sorted array containing all of the set's insertions and deletions.
-   * @return {[Array<*>, Array<*>]>}
-   */
-  async dump() {
-    await this.flush();
-    const [insertQueue, deleteQueue] = await super.dump();
-    deleteQueue.sort((x, y) => (x[0] > y[0] ? -1 : 1));
-    insertQueue.sort((x, y) => (x[1][0] > y[1][0] ? -1 : 1));
-    return [insertQueue, deleteQueue];
+  async process(queue                     , skipFlush           = false) {
+    delete this.hash;
+    await super.process(queue, skipFlush);
   }
 
-  async loadIpfsHash(hash       )               {
-    try {
-      const files = await this.ipfs.get(hash);
-      const queue = JSON.parse(files[0].content.toString('utf8'));
-      await this.process(queue);
-    } catch (error) {
-      if (this.listenerCount('error') > 0) {
-        this.emit('error', error);
-      } else {
-        throw error;
-      }
-    }
-  }
-
-  async initializeIpfs()               {
+  async init()               {
     this.ipfsId = (await this.ipfs.id()).id;
     this.on('publish', async (queue) => {
       if (!this.active) {
@@ -98,11 +82,7 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
         const message = Buffer.from(deflate(stringify(queue)));
         await this.ipfs.pubsub.publish(this.topic, message);
       } catch (error) {
-        if (this.listenerCount('error') > 0) {
-          this.emit('error', error);
-        } else {
-          throw error;
-        }
+        this.emit('error', error);
       }
     });
     await this.ipfs.pubsub.subscribe(this.topic, this.boundHandleQueueMessage, { discover: true });
@@ -123,7 +103,7 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
     } catch (error) {
       // IPFS connection is closed, don't send join
       if (error.code !== 'ECONNREFUSED') {
-        throw error;
+        this.emit('error', error);
       }
     }
   }
@@ -133,21 +113,25 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
    * @return {Array<Array<any>>}
    */
   ipfsSync()      {
-    clearTimeout(this.ipfsSyncTimeout);
-    this.ipfsSyncTimeout = setTimeout(() => this._ipfsSync(), 50); // eslint-disable-line no-underscore-dangle
-  }
-
-  async _ipfsSync()               { // eslint-disable-line no-underscore-dangle
-    try {
-      const message = await this.getIpfsHash();
-      await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(message, 'utf8'));
-    } catch (error) {
-      if (this.listenerCount('error') > 0) {
-        this.emit('error', error);
-      } else {
-        throw error;
-      }
+    if (this.syncMessagePromise) {
+      return;
     }
+    this.syncMessagePromise = this.syncQueue.add(async () => {
+      if (!this.active) {
+        delete this.syncMessagePromise;
+        return;
+      }
+      try {
+        const message = await this.getIpfsHash();
+        await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(message, 'utf8'));
+      } catch (error) {
+        this.emit('error', error);
+      }
+      delete this.syncMessagePromise;
+    }, { priority: 0 }).catch((error) => {
+      this.emit('error', error);
+      delete this.syncMessagePromise;
+    });
   }
 
   /**
@@ -155,6 +139,9 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
    * @return {Promise<string>}
    */
   async getIpfsHash()                 {
+    if (this.hash) {
+      return this.hash;
+    }
     await this.flush();
     const length = Buffer.from(`${this.namespace}>`).length;
     const openBuffer = Buffer.from('["');
@@ -207,9 +194,8 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
               } else {
                 buffer = Buffer.concat([commaBuffer, openBuffer, key.slice(length), midBuffer, pair, closeBuffer]);
               }
-              const shouldPush = this.push(buffer);
-              if (!shouldPush) {
-                console.log({ shouldPush });
+              const shouldKeepPushing = this.push(buffer);
+              if (!shouldKeepPushing) {
                 return;
               }
             } else {
@@ -218,6 +204,15 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
           }
           this.push(Buffer.from('],['));
           didWritePairs = true;
+          await new Promise((resolve, reject) => {
+            pairIterator.end((error             ) => {
+              if (error) {
+                reject(error);
+              } else {
+                resolve();
+              }
+            });
+          });
         }
         if (!didWriteDeletions) {
           const getKeyPair = (resolve) => {
@@ -235,40 +230,42 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
           while (true) {
             const [id, key] = await new Promise(getKeyPair);
             if (id && key) {
+              let buffer;
               if (skipDeletionComma) {
                 skipDeletionComma = false;
+                buffer = Buffer.concat([openBuffer, id.slice(length), midBuffer, key, closeBuffer]);
               } else {
-                this.push(commaBuffer);
+                buffer = Buffer.concat([commaBuffer, openBuffer, id.slice(length), midBuffer, key, closeBuffer]);
               }
-              this.push(openBuffer);
-              this.push(id.slice(length));
-              this.push(midBuffer);
-              this.push(key);
-              this.push(closeBuffer);
+              const shouldKeepPushing = this.push(buffer);
+              if (!shouldKeepPushing) {
+                return;
+              }
             } else {
               break;
             }
           }
           didWriteDeletions = true;
+          await new Promise((resolve, reject) => {
+            deletionIterator.end((error             ) => {
+              if (error) {
+                reject(error);
+              } else {
+                resolve();
+              }
+            });
+          });
         }
         this.push(Buffer.from(']]'));
         this.push(null);
-        await new Promise((resolve, reject) => {
-          pairIterator.end((error             ) => {
-            if (error) {
-              reject(error);
-            } else {
-              resolve();
-            }
-          });
-        });
         isReading = false;
       },
     });
     stream.push(Buffer.from('[['));
     const resultPromise = this.ipfs.addFromStream(stream, { wrapWithDirectory: false, recursive: false, pin: false });
     const result = await resultPromise;
-    return result[0].hash;
+    this.hash = result[0].hash;
+    return this.hash;
   }
 
   /**
@@ -299,7 +296,6 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
    */
   async shutdown()                {
     this.active = false;
-    clearTimeout(this.ipfsSyncTimeout);
     // Catch exceptions here as pubsub is sometimes closed by process kill signals.
     if (this.ipfsId) {
       try {
@@ -326,68 +322,107 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
         }
       }
     }
+    await this.syncQueue.onIdle();
   }
 
   async handleQueueMessage(message                           ) {
-    if (!this.active) {
-      return;
-    }
     if (message.from === this.ipfsId) {
       return;
     }
-    try {
-      const queue = JSON.parse(Buffer.from(inflate(message.data)).toString('utf8'));
-      await this.process(queue);
-    } catch (error) {
-      if (this.listenerCount('error') > 0) {
-        this.emit('error', error);
-      } else {
-        throw error;
+    this.syncQueue.add(async () => {
+      if (!this.active) {
+        return;
       }
-    }
+      try {
+        const queue = JSON.parse(Buffer.from(inflate(message.data)).toString('utf8'));
+        await this.process(queue);
+      } catch (error) {
+        this.emit('error', error);
+      }
+    }, { priority: 2 }); // eslint-disable-line no-underscore-dangle
   }
 
   async handleHashMessage(message                           ) {
-    if (message.from === this.ipfsId) {
-      return;
-    }
-    while (this.processingHash) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
     if (!this.active) {
       return;
     }
-    this.processingHash = true;
-    try {
-      const remoteHash = message.data.toString('utf8');
-      const beforeHash = await this.getIpfsHash();
-      if (remoteHash === beforeHash) {
-        this.processingHash = false;
-        return;
-      }
-      const stream = this.ipfs.catReadableStream(remoteHash);
-      const parser = jsonStreamParser();
-      const streamArray = jsonStreamArray();
-      const pipeline = stream.pipe(parser);
-      let arrayDepth = 0;
-      let streamState = 0;
-      let insertions = [];
-      let deletions = [];
-      streamArray.on('data', ({ value }) => {
-        if (streamState === 1) {
-          insertions.push(value);
-        } else if (streamState === 3) {
-          deletions.push(value);
+    if (message.from === this.ipfsId) {
+      return;
+    }
+    this.remoteHashes.add(message.data.toString('utf8'));
+    if (this.syncHashPromise) {
+      return;
+    }
+    this.syncHashPromise = this.syncQueue.add(async () => {
+      try {
+        const beforeHash = await this.getIpfsHash();
+        delete this.syncHashPromise;
+        const remoteHashes = this.remoteHashes;
+        this.remoteHashes = new Set();
+        const loadIpfsHashPromises = [];
+        for (const remoteHash of remoteHashes) {
+          if (remoteHash === beforeHash) {
+            continue;
+          }
+          loadIpfsHashPromises.push(this.loadIpfsHash(remoteHash));
         }
-        if (insertions.length + deletions.length < 1000) {
+        if (loadIpfsHashPromises.length === 0) {
           return;
         }
-        const i = insertions;
-        const d = deletions;
-        insertions = [];
-        deletions = [];
-        this.process([i, d]);
-      });
+        await Promise.all(loadIpfsHashPromises);
+        const afterHash = await this.getIpfsHash();
+        if (!this.active) {
+          return;
+        }
+        if (beforeHash !== afterHash) {
+          return;
+        }
+        let shouldSendHash = false;
+        for (const remoteHash of remoteHashes) {
+          if (afterHash !== remoteHash) {
+            shouldSendHash = true;
+            break;
+          }
+        }
+        if (shouldSendHash) {
+          this.ipfsSync();
+        }
+      } catch (error) {
+        delete this.syncHashPromise;
+        this.emit('error', error);
+      }
+    }, { priority: 1 }).catch((error) => {
+      delete this.syncHashPromise;
+      this.emit('error', error);
+    });
+  }
+
+  async loadIpfsHash(hash       ) {
+    const processQueue = new PQueue({ concurrency: 1 });
+    const stream = this.ipfs.catReadableStream(hash);
+    const parser = jsonStreamParser();
+    const streamArray = jsonStreamArray();
+    const pipeline = stream.pipe(parser);
+    let arrayDepth = 0;
+    let streamState = 0;
+    let insertions = [];
+    let deletions = [];
+    streamArray.on('data', ({ value }) => {
+      if (streamState === 1) {
+        insertions.push(value);
+      } else if (streamState === 3) {
+        deletions.push(value);
+      }
+      if (insertions.length + deletions.length < 1000) {
+        return;
+      }
+      const i = insertions;
+      const d = deletions;
+      insertions = [];
+      deletions = [];
+      processQueue.add(() => this.process([i, d], true));
+    });
+    try {
       await new Promise((resolve, reject) => {
         pipeline.on('error', (error) => {
           reject(error);
@@ -414,20 +449,12 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
           }
         });
       });
-      await this.process([insertions, deletions]);
-      const afterHash = await this.getIpfsHash();
-      if (this.active && beforeHash !== afterHash && afterHash !== remoteHash) {
-        await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(afterHash, 'utf8'));
-      }
-      this.processingHash = false;
     } catch (error) {
-      this.processingHash = false;
-      if (this.listenerCount('error') > 0) {
-        this.emit('error', error);
-      } else {
-        throw error;
-      }
+      this.emit('error', error);
+      return;
     }
+    processQueue.add(() => this.process([insertions, deletions]));
+    await processQueue.onIdle();
   }
 
   async handleJoinMessage(message                           ) {

@@ -59,7 +59,6 @@ const run = async () => {
 
 -   [constructor](#constructor)
     -   [Parameters](#parameters)
--   [dump](#dump)
 -   [ipfsSync](#ipfssync)
 -   [getIpfsHash](#getipfshash)
 -   [waitForIpfsPeers](#waitforipfspeers)
@@ -80,10 +79,6 @@ Create an observed-remove CRDT.
 -   `options` **[Object](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Object)**  (optional, default `{}`)
     -   `options.maxAge` **[String](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)** Max age of insertion/deletion identifiers (optional, default `5000`)
     -   `options.bufferPublishing` **[String](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)** Interval by which to buffer 'publish' events (optional, default `20`)
-
-### dump
-
-Return a sorted array containing all of the set's insertions and deletions.
 
 ### ipfsSync
 

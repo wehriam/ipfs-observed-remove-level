@@ -16,6 +16,7 @@ let nodes = [];
 
 describe('Map Scale', () => {
   let db;
+  let maps;
 
   beforeAll(async () => {
     nodes = await getSwarm(COUNT);
@@ -24,8 +25,12 @@ describe('Map Scale', () => {
   });
 
   afterAll(async () => {
-    await db.close();
     await closeAllNodes();
+    await db.close();
+  });
+
+  afterEach(async () => {
+    await Promise.all(maps.map((map) => map.shutdown()));
   });
 
   test(`Synchronizes ${COUNT} maps`, async () => {
@@ -42,7 +47,7 @@ describe('Map Scale', () => {
     const aDeletePromises = [];
     const bDeletePromises = [];
     const cDeletePromises = [];
-    const maps = nodes.map((node) => {
+    maps = nodes.map((node) => {
       const map = new IpfsObservedRemoveMap(db, node, topic, [], { namespace: uuid.v4() });
       aMapPromises.push(new Promise((resolve) => {
         const handler = (key, value) => {
@@ -114,32 +119,33 @@ describe('Map Scale', () => {
     await Promise.all(bDeletePromises);
     await randomMap().delete(keyC);
     await Promise.all(cDeletePromises);
-    await Promise.all(maps.map((map) => map.shutdown()));
   });
 
   test(`Synchronizes ${COUNT} maps automatically`, async () => {
     const topic = uuid.v4();
-    const maps = [new IpfsObservedRemoveMap(db, nodes[0], topic, [[uuid.v4(), generateValue()]], { namespace: uuid.v4() })];
+    maps = [new IpfsObservedRemoveMap(db, nodes[0], topic, [[uuid.v4(), generateValue()]], { namespace: uuid.v4(), bufferPublishing: 60000 })];
     await maps[0].readyPromise;
-    const mapPromises = [];
     for (let i = 1; i < nodes.length; i += 1) {
-      const map = new IpfsObservedRemoveMap(db, nodes[i], topic, [], { namespace: uuid.v4() });
+      const map = new IpfsObservedRemoveMap(db, nodes[i], topic, [], { namespace: uuid.v4(), bufferPublishing: 60000 });
       maps.push(map);
-      mapPromises.push(new Promise((resolve) => {
-        const handler = () => {
-          map.removeListener('set', handler);
-          resolve();
-        };
-        map.on('set', handler);
-      }));
+      map.on('error', console.error);
     }
     await Promise.all(maps.map((map) => map.readyPromise));
-    await Promise.all(mapPromises);
-    const dump = await maps[0].dump();
-    for (let i = 1; i < maps.length; i += 1) {
-      expect(maps[i].dump()).resolves.toEqual(dump);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await Promise.all(maps.map((map) => map.syncQueue.onIdle()));
+    for (let i = 0; i < 1000; i += 1) {
+      const map = maps[Math.floor(Math.random() * maps.length)];
+      await map.set(uuid.v4(), generateValue());
     }
-    await Promise.all(maps.map((map) => map.shutdown()));
+    for (const map of maps) {
+      map.ipfsSync();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await Promise.all(maps.map((map) => map.syncQueue.onIdle()));
+    const hash = await maps[0].getIpfsHash();
+    for (let i = 1; i < maps.length; i += 1) {
+      await expect(maps[i].getIpfsHash()).resolves.toEqual(hash);
+    }
   });
 });
 
