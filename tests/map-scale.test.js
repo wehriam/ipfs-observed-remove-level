@@ -4,10 +4,10 @@ const os = require('os');
 const path = require('path');
 const uuid = require('uuid');
 const level = require('level');
-const stringify = require('json-stringify-deterministic');
 const { getSwarm, closeAllNodes } = require('./lib/ipfs');
 const { IpfsObservedRemoveMap } = require('../src');
 const { generateValue } = require('./lib/values');
+const waitForHashing = require('./lib/wait-for-hashing');
 
 jest.setTimeout(30000);
 
@@ -33,7 +33,7 @@ describe('Map Scale', () => {
     await Promise.all(maps.map((map) => map.shutdown()));
   });
 
-  test(`Synchronizes ${COUNT} maps`, async () => {
+  test.skip(`Synchronizes ${COUNT} maps`, async () => {
     const topic = uuid.v4();
     const keyA = uuid.v4();
     const keyB = uuid.v4();
@@ -51,7 +51,7 @@ describe('Map Scale', () => {
       const map = new IpfsObservedRemoveMap(db, node, topic, [], { namespace: uuid.v4() });
       aMapPromises.push(new Promise((resolve) => {
         const handler = (key, value) => {
-          if (key === keyA && stringify(value) === stringify(valueA)) {
+          if (key === keyA && JSON.stringify(value) === JSON.stringify(valueA)) {
             map.removeListener('set', handler);
             resolve();
           }
@@ -60,7 +60,7 @@ describe('Map Scale', () => {
       }));
       bMapPromises.push(new Promise((resolve) => {
         const handler = (key, value) => {
-          if (key === keyB && stringify(value) === stringify(valueB)) {
+          if (key === keyB && JSON.stringify(value) === JSON.stringify(valueB)) {
             map.removeListener('set', handler);
             resolve();
           }
@@ -69,7 +69,7 @@ describe('Map Scale', () => {
       }));
       cMapPromises.push(new Promise((resolve) => {
         const handler = (key, value) => {
-          if (key === keyC && stringify(value) === stringify(valueC)) {
+          if (key === keyC && JSON.stringify(value) === JSON.stringify(valueC)) {
             map.removeListener('set', handler);
             resolve();
           }
@@ -78,7 +78,7 @@ describe('Map Scale', () => {
       }));
       aDeletePromises.push(new Promise((resolve) => {
         const handler = (key, value) => {
-          if (key === keyA && stringify(value) === stringify(valueA)) {
+          if (key === keyA && JSON.stringify(value) === JSON.stringify(valueA)) {
             map.removeListener('delete', handler);
             resolve();
           }
@@ -87,7 +87,7 @@ describe('Map Scale', () => {
       }));
       bDeletePromises.push(new Promise((resolve) => {
         const handler = (key, value) => {
-          if (key === keyB && stringify(value) === stringify(valueB)) {
+          if (key === keyB && JSON.stringify(value) === JSON.stringify(valueB)) {
             map.removeListener('delete', handler);
             resolve();
           }
@@ -96,7 +96,7 @@ describe('Map Scale', () => {
       }));
       cDeletePromises.push(new Promise((resolve) => {
         const handler = (key, value) => {
-          if (key === keyC && stringify(value) === stringify(valueC)) {
+          if (key === keyC && JSON.stringify(value) === JSON.stringify(valueC)) {
             map.removeListener('delete', handler);
             resolve();
           }
@@ -131,8 +131,6 @@ describe('Map Scale', () => {
       map.on('error', console.error);
     }
     await Promise.all(maps.map((map) => map.readyPromise));
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    await Promise.all(maps.map((map) => map.syncQueue.onIdle()));
     for (let i = 0; i < 1000; i += 1) {
       const map = maps[Math.floor(Math.random() * maps.length)];
       await map.set(uuid.v4(), generateValue());
@@ -140,8 +138,7 @@ describe('Map Scale', () => {
     for (const map of maps) {
       map.ipfsSync();
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    await Promise.all(maps.map((map) => map.syncQueue.onIdle()));
+    await waitForHashing(maps);
     const hash = await maps[0].getIpfsHash();
     for (let i = 1; i < maps.length; i += 1) {
       await expect(maps[i].getIpfsHash()).resolves.toEqual(hash);

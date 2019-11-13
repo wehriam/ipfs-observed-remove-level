@@ -1,12 +1,12 @@
 // @flow
 
 const { inflate, deflate } = require('pako');
-const { Readable } = require('stream');
 const ObservedRemoveMap = require('observed-remove-level/dist/map');
-const stringify = require('json-stringify-deterministic');
 const { parser: jsonStreamParser } = require('stream-json/Parser');
 const { streamArray: jsonStreamArray } = require('stream-json/streamers/StreamArray');
 const { default: PQueue } = require('p-queue');
+const ReadableJsonDump = require('./readable-json-dump');
+const LruCache = require('lru-cache');
 
 type Options = {
   maxAge?:number,
@@ -30,6 +30,9 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
    */
   constructor(db:Object, ipfs:Object, topic:string, entries?: Iterable<[string, V]>, options?:Options = {}) {
     super(db, entries, options);
+    if (!ipfs) {
+      throw new Error("Missing required argument 'ipfs'");
+    }
     this.db = db;
     this.ipfs = ipfs;
     this.topic = topic;
@@ -37,10 +40,18 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     this.disableSync = !!options.disableSync;
     this.boundHandleQueueMessage = this.handleQueueMessage.bind(this);
     this.boundHandleHashMessage = this.handleHashMessage.bind(this);
-    this.boundHandleJoinMessage = this.handleJoinMessage.bind(this);
-    this.readyPromise = this.init();
-    this.syncQueue = new PQueue({ concurrency: 1 });
-    this.remoteHashes = new Set();
+    this.readyPromise = this.readyPromise.then(async () => {
+      await this.initIpfs();
+    });
+    this.remoteHashQueue = [];
+    this.syncCache = new LruCache(100);
+    this.on('set', () => {
+      delete this.hash;
+    });
+    this.on('delete', () => {
+      delete this.hash;
+    });
+    this.isLoadingHashes = false;
   }
 
   /**
@@ -59,27 +70,21 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
   disableSync: boolean;
   boundHandleQueueMessage: (message:{from:string, data:Buffer}) => Promise<void>;
   boundHandleHashMessage: (message:{from:string, data:Buffer}) => Promise<void>;
-  boundHandleJoinMessage: (message:{from:string, data:Buffer}) => Promise<void>;
   db: Object;
   hash: string | void;
-  syncQueue: PQueue;
-  syncMessagePromise: Promise<void> | void;
-  syncHashPromise: Promise<void> | void;
-  remoteHashes: Set<string>;
+  syncCache: LruCache;
+  ipfsSyncTimeout: TimeoutID;
+  remoteHashQueue: Array<string>;
 
-  async process(queue:[Array<*>, Array<*>], skipFlush?: boolean = false) {
-    delete this.hash;
-    await super.process(queue, skipFlush);
-  }
-
-  async init():Promise<void> {
-    this.ipfsId = (await this.ipfs.id()).id;
+  async initIpfs() {
+    const out = await this.ipfs.id();
+    this.ipfsId = out.id;
     this.on('publish', async (queue) => {
       if (!this.active) {
         return;
       }
       try {
-        const message = Buffer.from(deflate(stringify(queue)));
+        const message = Buffer.from(deflate(JSON.stringify(queue)));
         await this.ipfs.pubsub.publish(this.topic, message);
       } catch (error) {
         this.emit('error', error);
@@ -88,18 +93,18 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     await this.ipfs.pubsub.subscribe(this.topic, this.boundHandleQueueMessage, { discover: true });
     if (!this.disableSync) {
       await this.ipfs.pubsub.subscribe(`${this.topic}:hash`, this.boundHandleHashMessage, { discover: true });
-      await this.ipfs.pubsub.subscribe(`${this.topic}:join`, this.boundHandleJoinMessage, { discover: true });
-      this.sendJoinMessage();
+      this.waitForPeersThenSendHash();
     }
   }
 
-  async sendJoinMessage():Promise<void> {
+  async waitForPeersThenSendHash():Promise<void> {
     try {
-      const peerIds = await this.waitForIpfsPeers();
+      const peerIds = await this.ipfs.pubsub.peers(this.topic, { timeout: 10000 });
       if (peerIds.length === 0) {
         return;
       }
-      await this.ipfs.pubsub.publish(`${this.topic}:join`, Buffer.from(this.ipfsId, 'utf8'));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      this.ipfsSync();
     } catch (error) {
       // IPFS connection is closed, don't send join
       if (error.code !== 'ECONNREFUSED') {
@@ -112,27 +117,25 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
    * Publish an IPFS hash of an array containing all of the object's insertions and deletions.
    * @return {Array<Array<any>>}
    */
-  ipfsSync():void {
-    if (this.syncMessagePromise) {
+  async ipfsSync() {
+    if (!this.active) {
       return;
     }
-    this.syncMessagePromise = this.syncQueue.add(async () => {
+    try {
+      const hash = await this.getIpfsHash();
       if (!this.active) {
-        delete this.syncMessagePromise;
         return;
       }
-      try {
-        const message = await this.getIpfsHash();
-        await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(message, 'utf8'));
-      } catch (error) {
-        this.emit('error', error);
+      if (!this.syncCache.has(hash, true)) {
+        this.syncCache.set(hash, true);
+        await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'));
+        this.emit('hash', hash);
       }
-      delete this.syncMessagePromise;
-    }, { priority: 0 }).catch((error) => {
+    } catch (error) {
       this.emit('error', error);
-      delete this.syncMessagePromise;
-    });
+    }
   }
+
 
   /**
    * Stores and returns an IPFS hash of the current insertions and deletions
@@ -142,143 +145,12 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     if (this.hash) {
       return this.hash;
     }
-    await this.flush();
-    const length = Buffer.from(`${this.namespace}>`).length;
-    const openBuffer = Buffer.from('["');
-    const midBuffer = Buffer.from('",');
-    const closeBuffer = Buffer.from(']');
-    const commaBuffer = Buffer.from(',');
-    const pairIterator = this.db.db.db.iterator({
-      gt: Buffer.from(`${this.namespace}>`),
-      lt: Buffer.from(`${this.namespace}?`),
-      keyAsBuffer: true,
-      valueAsBuffer: true,
-    });
-    const deletionIterator = this.db.db.db.iterator({
-      gt: Buffer.from(`${this.namespace}<`),
-      lt: Buffer.from(`${this.namespace}=`),
-      keyAsBuffer: true,
-      valueAsBuffer: true,
-    });
-    let isReading = false;
-    let didWritePairs = false;
-    let didWriteDeletions = false;
-    let skipPairComma = true;
-    let skipDeletionComma = true;
-    const stream = new Readable({
-      async read() {
-        if (isReading) {
-          return;
-        }
-        isReading = true;
-        if (!didWritePairs) {
-          const getKeyPair = (resolve) => {
-            pairIterator.next((error:Error | void, k: Buffer | void, v: Buffer | void) => {
-              if (error) {
-                didWritePairs = true;
-                didWriteDeletions = true;
-                process.nextTick(() => this.emit('error', error));
-                resolve([undefined, undefined]);
-              } else {
-                resolve([k, v]);
-              }
-            });
-          };
-          while (true) {
-            const [key, pair] = await new Promise(getKeyPair);
-            if (key && pair) {
-              let buffer;
-              if (skipPairComma) {
-                skipPairComma = false;
-                buffer = Buffer.concat([openBuffer, key.slice(length), midBuffer, pair, closeBuffer]);
-              } else {
-                buffer = Buffer.concat([commaBuffer, openBuffer, key.slice(length), midBuffer, pair, closeBuffer]);
-              }
-              const shouldKeepPushing = this.push(buffer);
-              if (!shouldKeepPushing) {
-                return;
-              }
-            } else {
-              break;
-            }
-          }
-          this.push(Buffer.from('],['));
-          didWritePairs = true;
-          await new Promise((resolve, reject) => {
-            pairIterator.end((error:Error | void) => {
-              if (error) {
-                reject(error);
-              } else {
-                resolve();
-              }
-            });
-          });
-        }
-        if (!didWriteDeletions) {
-          const getKeyPair = (resolve) => {
-            deletionIterator.next((error:Error | void, k: Buffer | void, v: Buffer | void) => {
-              if (error) {
-                didWritePairs = true;
-                didWriteDeletions = true;
-                process.nextTick(() => this.emit('error', error));
-                resolve([undefined, undefined]);
-              } else {
-                resolve([k, v]);
-              }
-            });
-          };
-          while (true) {
-            const [id, key] = await new Promise(getKeyPair);
-            if (id && key) {
-              let buffer;
-              if (skipDeletionComma) {
-                skipDeletionComma = false;
-                buffer = Buffer.concat([openBuffer, id.slice(length), midBuffer, key, closeBuffer]);
-              } else {
-                buffer = Buffer.concat([commaBuffer, openBuffer, id.slice(length), midBuffer, key, closeBuffer]);
-              }
-              const shouldKeepPushing = this.push(buffer);
-              if (!shouldKeepPushing) {
-                return;
-              }
-            } else {
-              break;
-            }
-          }
-          didWriteDeletions = true;
-          await new Promise((resolve, reject) => {
-            deletionIterator.end((error:Error | void) => {
-              if (error) {
-                reject(error);
-              } else {
-                resolve();
-              }
-            });
-          });
-        }
-        this.push(Buffer.from(']]'));
-        this.push(null);
-        isReading = false;
-      },
-    });
-    stream.push(Buffer.from('[['));
+    const stream = new ReadableJsonDump(this.db.db.db, this.namespace);
     const resultPromise = this.ipfs.addFromStream(stream, { wrapWithDirectory: false, recursive: false, pin: false });
     const result = await resultPromise;
-    this.hash = result[0].hash;
-    return this.hash;
-  }
-
-  /**
-   * Resolves an array of peer ids after one or more IPFS peers connects. Useful for testing.
-   * @return {Promise<void>}
-   */
-  async waitForIpfsPeers():Promise<Array<string>> {
-    let peerIds = await this.ipfs.pubsub.peers(this.topic);
-    while (this.active && peerIds.length === 0) {
-      peerIds = await this.ipfs.pubsub.peers(this.topic);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-    return peerIds;
+    const { hash } = result[0];
+    this.hash = hash;
+    return hash;
   }
 
   /**
@@ -313,92 +185,61 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
             throw error;
           }
         }
-        try {
-          await this.ipfs.pubsub.unsubscribe(`${this.topic}:join`, this.boundHandleJoinMessage);
-        } catch (error) {
-          if (!notSubscribedRegex.test(error.message)) {
-            throw error;
-          }
-        }
       }
     }
-    await this.syncQueue.onIdle();
+    await super.shutdown();
   }
 
   async handleQueueMessage(message:{from:string, data:Buffer}) {
     if (message.from === this.ipfsId) {
       return;
     }
-    this.syncQueue.add(async () => {
-      if (!this.active) {
-        return;
-      }
-      try {
-        const queue = JSON.parse(Buffer.from(inflate(message.data)).toString('utf8'));
-        await this.process(queue);
-      } catch (error) {
-        this.emit('error', error);
-      }
-    }, { priority: 2 }); // eslint-disable-line no-underscore-dangle
+    if (!this.active) {
+      return;
+    }
+    try {
+      const queue = JSON.parse(Buffer.from(inflate(message.data)).toString('utf8'));
+      await this.process(queue);
+    } catch (error) {
+      this.emit('error', error);
+    }
   }
 
-  async handleHashMessage(message:{from:string, data:Buffer}) {
+  handleHashMessage(message:{from:string, data:Buffer}) {
     if (!this.active) {
       return;
     }
     if (message.from === this.ipfsId) {
       return;
     }
-    this.remoteHashes.add(message.data.toString('utf8'));
-    if (this.syncHashPromise) {
+    const remoteHash = message.data.toString('utf8');
+    this.remoteHashQueue.push(remoteHash);
+    this.loadIpfsHashes();
+  }
+
+  async loadIpfsHashes() {
+    if (this.isLoadingHashes) {
       return;
     }
-    this.syncHashPromise = this.syncQueue.add(async () => {
-      try {
-        const beforeHash = await this.getIpfsHash();
-        delete this.syncHashPromise;
-        const remoteHashes = this.remoteHashes;
-        this.remoteHashes = new Set();
-        const loadIpfsHashPromises = [];
-        for (const remoteHash of remoteHashes) {
-          if (remoteHash === beforeHash) {
-            continue;
-          }
-          loadIpfsHashPromises.push(this.loadIpfsHash(remoteHash));
+    this.isLoadingHashes = true;
+    try {
+      while (this.remoteHashQueue.length > 0 && this.active && this.isLoadingHashes) {
+        const remoteHash = this.remoteHashQueue.pop();
+        if (this.syncCache.has(remoteHash)) {
+          continue;
         }
-        if (loadIpfsHashPromises.length === 0) {
-          return;
-        }
-        await Promise.all(loadIpfsHashPromises);
-        const afterHash = await this.getIpfsHash();
-        if (!this.active) {
-          return;
-        }
-        if (beforeHash !== afterHash) {
-          return;
-        }
-        let shouldSendHash = false;
-        for (const remoteHash of remoteHashes) {
-          if (afterHash !== remoteHash) {
-            shouldSendHash = true;
-            break;
-          }
-        }
-        if (shouldSendHash) {
-          this.ipfsSync();
-        }
-      } catch (error) {
-        delete this.syncHashPromise;
-        this.emit('error', error);
+        this.syncCache.set(remoteHash, true);
+        await this.loadIpfsHash(remoteHash);
       }
-    }, { priority: 1 }).catch((error) => {
-      delete this.syncHashPromise;
+    } catch (error) {
       this.emit('error', error);
-    });
+    }
+    this.isLoadingHashes = false;
+    this.ipfsSync();
   }
 
   async loadIpfsHash(hash:string) {
-    const processQueue = new PQueue({ concurrency: 1 });
+    const processQueue = new PQueue({});
     const stream = this.ipfs.catReadableStream(hash);
     const parser = jsonStreamParser();
     const streamArray = jsonStreamArray();
@@ -455,16 +296,6 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     }
     processQueue.add(() => this.process([insertions, deletions]));
     await processQueue.onIdle();
-  }
-
-  async handleJoinMessage(message:{from:string, data:Buffer}) {
-    if (!this.active) {
-      return;
-    }
-    if (message.from === this.ipfsId) {
-      return;
-    }
-    await this.ipfsSync();
   }
 }
 

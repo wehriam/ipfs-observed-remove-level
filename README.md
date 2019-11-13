@@ -61,7 +61,6 @@ const run = async () => {
     -   [Parameters](#parameters)
 -   [ipfsSync](#ipfssync)
 -   [getIpfsHash](#getipfshash)
--   [waitForIpfsPeers](#waitforipfspeers)
 -   [ipfsPeerCount](#ipfspeercount)
 -   [shutdown](#shutdown)
 -   [IpfsObservedRemoveSet#readyPromise](#ipfsobservedremovesetreadypromise)
@@ -91,12 +90,6 @@ Returns **[Array](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Gl
 Stores and returns an IPFS hash of the current insertions and deletions
 
 Returns **[Promise](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)&lt;[string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)>** 
-
-### waitForIpfsPeers
-
-Resolves an array of peer ids after one or more IPFS peers connects. Useful for testing.
-
-Returns **[Promise](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)&lt;void>** 
 
 ### ipfsPeerCount
 

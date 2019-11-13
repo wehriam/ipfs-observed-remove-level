@@ -8,6 +8,7 @@ const { getSwarm, closeAllNodes } = require('./lib/ipfs');
 const { IpfsObservedRemoveMap } = require('../src');
 const { generateValue } = require('./lib/values');
 const expect = require('expect');
+const waitForHashing = require('./lib/wait-for-hashing');
 require('./lib/async-iterator-comparison');
 
 jest.setTimeout(30000);
@@ -146,8 +147,7 @@ describe('IPFS Map', () => {
     const alice = new IpfsObservedRemoveMap(db, nodes[0], topic, [[keyA, valueA], [keyB, valueB], [keyC, valueC]], { namespace: uuid.v4(), bufferPublishing: 30000 });
     const bob = new IpfsObservedRemoveMap(db, nodes[1], topic, [[keyX, valueX], [keyY, valueY], [keyZ, valueZ]], { namespace: uuid.v4(), bufferPublishing: 30000 });
     await Promise.all([bob.readyPromise, alice.readyPromise]);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    await Promise.all([alice, bob].map((map) => map.syncQueue.onIdle()));
+    await waitForHashing([alice, bob]);
     await expect(alice.dump()).resolves.toEqual(await bob.dump());
     await expect(alice.getIpfsHash()).resolves.toEqual(await bob.getIpfsHash());
     clearTimeout(alice.publishTimeout);
