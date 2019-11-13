@@ -11,8 +11,7 @@ const LruCache = require('lru-cache');
 type Options = {
   maxAge?:number,
   bufferPublishing?:number,
-  key?: any,
-  format?: string,
+  namespace?: string,
   disableSync?: boolean
 };
 
@@ -46,10 +45,10 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     this.remoteHashQueue = [];
     this.syncCache = new LruCache(100);
     this.on('set', () => {
-      delete this.hash;
+      delete this.ipfsHash;
     });
     this.on('delete', () => {
-      delete this.hash;
+      delete this.ipfsHash;
     });
     this.isLoadingHashes = false;
   }
@@ -71,10 +70,11 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
   boundHandleQueueMessage: (message:{from:string, data:Buffer}) => Promise<void>;
   boundHandleHashMessage: (message:{from:string, data:Buffer}) => Promise<void>;
   db: Object;
-  hash: string | void;
+  ipfsHash: string | void;
   syncCache: LruCache;
   ipfsSyncTimeout: TimeoutID;
   remoteHashQueue: Array<string>;
+  isLoadingHashes: boolean;
 
   async initIpfs() {
     const out = await this.ipfs.id();
@@ -142,14 +142,14 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
    * @return {Promise<string>}
    */
   async getIpfsHash():Promise<string> {
-    if (this.hash) {
-      return this.hash;
+    if (this.ipfsHash) {
+      return this.ipfsHash;
     }
     const stream = new ReadableJsonDump(this.db.db.db, this.namespace);
     const resultPromise = this.ipfs.addFromStream(stream, { wrapWithDirectory: false, recursive: false, pin: false });
     const result = await resultPromise;
     const { hash } = result[0];
-    this.hash = hash;
+    this.ipfsHash = hash;
     return hash;
   }
 

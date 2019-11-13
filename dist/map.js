@@ -11,8 +11,7 @@ const LruCache = require('lru-cache');
                 
                  
                            
-            
-                  
+                     
                        
   
 
@@ -46,10 +45,10 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
     this.remoteHashQueue = [];
     this.syncCache = new LruCache(100);
     this.on('set', () => {
-      delete this.hash;
+      delete this.ipfsHash;
     });
     this.on('delete', () => {
-      delete this.hash;
+      delete this.ipfsHash;
     });
     this.isLoadingHashes = false;
   }
@@ -71,10 +70,11 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
                                                                                  
                                                                                 
              
-                      
+                          
                       
                              
                                  
+                           
 
   async initIpfs() {
     const out = await this.ipfs.id();
@@ -142,14 +142,14 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
    * @return {Promise<string>}
    */
   async getIpfsHash()                 {
-    if (this.hash) {
-      return this.hash;
+    if (this.ipfsHash) {
+      return this.ipfsHash;
     }
     const stream = new ReadableJsonDump(this.db.db.db, this.namespace);
     const resultPromise = this.ipfs.addFromStream(stream, { wrapWithDirectory: false, recursive: false, pin: false });
     const result = await resultPromise;
     const { hash } = result[0];
-    this.hash = hash;
+    this.ipfsHash = hash;
     return hash;
   }
 
