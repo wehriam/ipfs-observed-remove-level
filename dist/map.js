@@ -127,7 +127,6 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
       }
       if (!this.syncCache.has(hash, true)) {
         this.syncCache.set(hash, true);
-        console.log('>', hash, this.ipfsId, new Date(), this.size);
         await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'));
         this.emit('hash', hash);
       }
@@ -229,7 +228,6 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
           continue;
         }
         this.syncCache.set(remoteHash, true);
-        console.log('<', remoteHash, this.ipfsId, new Date(), this.size);
         await this.loadIpfsHash(remoteHash);
       }
     } catch (error) {
