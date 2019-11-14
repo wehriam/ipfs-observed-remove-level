@@ -7,6 +7,7 @@ const { streamArray: jsonStreamArray } = require('stream-json/streamers/StreamAr
 const { default: PQueue } = require('p-queue');
 const ReadableJsonDump = require('./readable-json-dump');
 const LruCache = require('lru-cache');
+const { debounce } = require('lodash');
 
 type Options = {
   maxAge?:number,
@@ -51,6 +52,7 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
       delete this.ipfsHash;
     });
     this.isLoadingHashes = false;
+    this.debouncedIpfsSync = debounce(this.ipfsSync.bind(this), 1000);
   }
 
   /**
@@ -72,9 +74,9 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
   db: Object;
   ipfsHash: string | void;
   syncCache: LruCache;
-  ipfsSyncTimeout: TimeoutID;
   remoteHashQueue: Array<string>;
   isLoadingHashes: boolean;
+  debouncedIpfsSync: () => Promise<void>;
 
   async initIpfs() {
     const out = await this.ipfs.id();
@@ -99,15 +101,11 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
 
   async waitForPeersThenSendHash():Promise<void> {
     try {
-      const peerIds = await this.ipfs.pubsub.peers(this.topic, { timeout: 10000 });
-      if (peerIds.length === 0) {
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      this.ipfsSync();
+      await this.ipfs.pubsub.peers(this.topic, { timeout: 10000 });
+      this.debouncedIpfsSync();
     } catch (error) {
-      // IPFS connection is closed, don't send join
-      if (error.code !== 'ECONNREFUSED') {
+      // IPFS connection is closed or timed out, don't send join
+      if (error.code !== 'ECONNREFUSED' && error.name !== 'TimeoutError') {
         this.emit('error', error);
       }
     }
@@ -122,12 +120,14 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
       return;
     }
     try {
+      await this.processQueue.onIdle();
       const hash = await this.getIpfsHash();
       if (!this.active) {
         return;
       }
       if (!this.syncCache.has(hash, true)) {
         this.syncCache.set(hash, true);
+        console.log('>', hash, this.ipfsId, new Date(), this.size);
         await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'));
         this.emit('hash', hash);
       }
@@ -229,13 +229,14 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
           continue;
         }
         this.syncCache.set(remoteHash, true);
+        console.log('<', remoteHash, this.ipfsId, new Date(), this.size);
         await this.loadIpfsHash(remoteHash);
       }
     } catch (error) {
       this.emit('error', error);
     }
     this.isLoadingHashes = false;
-    this.ipfsSync();
+    this.debouncedIpfsSync();
   }
 
   async loadIpfsHash(hash:string) {
