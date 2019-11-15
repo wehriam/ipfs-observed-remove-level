@@ -1,24 +1,23 @@
-//      
+// @flow
 
 const { inflate, deflate } = require('pako');
-const ObservedRemoveMap = require('observed-remove-level/dist/map');
+const ObservedRemoveMap = require('observed-remove-level/dist/signed-map');
 const { parser: jsonStreamParser } = require('stream-json/Parser');
 const { streamArray: jsonStreamArray } = require('stream-json/streamers/StreamArray');
 const { default: PQueue } = require('p-queue');
-const ReadableJsonDump = require('./readable-json-dump');
 const LruCache = require('lru-cache');
 const { debounce } = require('lodash');
 
-                
-                 
-                           
-                     
-                       
-  
+type Options = {
+  maxAge?:number,
+  bufferPublishing?:number,
+  namespace?: string,
+  disableSync?: boolean
+};
 
 const notSubscribedRegex = /Not subscribed/;
 
-class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-line no-unused-vars
+class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-line no-unused-vars
   /**
    * Create an observed-remove CRDT.
    * @param {Object} [ipfs] Object implementing the [core IPFS API](https://github.com/ipfs/interface-ipfs-core#api), most likely a [js-ipfs](https://github.com/ipfs/js-ipfs) or [ipfs-http-client](https://github.com/ipfs/js-ipfs-http-client) object.
@@ -28,7 +27,7 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
    * @param {String} [options.maxAge=5000] Max age of insertion/deletion identifiers
    * @param {String} [options.bufferPublishing=20] Interval by which to buffer 'publish' events
    */
-  constructor(db       , ipfs       , topic       , entries                        , options          = {}) {
+  constructor(db:Object, ipfs:Object, topic:string, entries?: Iterable<[string, V, string, string]>, options?:Options = {}) {
     super(db, entries, options);
     if (!ipfs) {
       throw new Error("Missing required argument 'ipfs'");
@@ -63,20 +62,20 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
    * @readonly
    */
 
-               
-                
-                              
-                  
-                 
-                       
-                                                                                 
-                                                                                
-             
-                          
-                      
-                                 
-                           
-                                         
+  ipfs: Object;
+  topic: string;
+  readyPromise: Promise<void>;
+  active: boolean;
+  ipfsId: string;
+  disableSync: boolean;
+  boundHandleQueueMessage: (message:{from:string, data:Buffer}) => Promise<void>;
+  boundHandleHashMessage: (message:{from:string, data:Buffer}) => Promise<void>;
+  db: Object;
+  ipfsHash: string | void;
+  syncCache: LruCache;
+  remoteHashQueue: Array<string>;
+  isLoadingHashes: boolean;
+  debouncedIpfsSync: () => Promise<void>;
 
   async initIpfs() {
     const out = await this.ipfs.id();
@@ -99,7 +98,7 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
     }
   }
 
-  async waitForPeersThenSendHash()               {
+  async waitForPeersThenSendHash():Promise<void> {
     try {
       await this.ipfs.pubsub.peers(this.topic, { timeout: 10000 });
       this.debouncedIpfsSync();
@@ -143,23 +142,21 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
    * Stores and returns an IPFS hash of the current insertions and deletions
    * @return {Promise<string>}
    */
-  async getIpfsHash()                 {
+  async getIpfsHash():Promise<string> {
     if (this.ipfsHash) {
       return this.ipfsHash;
     }
-    const stream = new ReadableJsonDump(this.db.db.db, this.namespace);
-    const resultPromise = this.ipfs.addFromStream(stream, { wrapWithDirectory: false, recursive: false, pin: false });
-    const result = await resultPromise;
-    const { hash } = result[0];
-    this.ipfsHash = hash;
-    return hash;
+    const data = await this.dump();
+    const files = await this.ipfs.add(Buffer.from(JSON.stringify(data)));
+    this.ipfsHash = files[0].hash;
+    return this.ipfsHash;
   }
 
   /**
    * Current number of IPFS pubsub peers.
    * @return {number}
    */
-  async ipfsPeerCount()                 {
+  async ipfsPeerCount():Promise<number> {
     const peerIds = await this.ipfs.pubsub.peers(this.topic);
     return peerIds.length;
   }
@@ -168,7 +165,7 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
    * Gracefully shutdown
    * @return {void}
    */
-  async shutdown()                {
+  async shutdown(): Promise<void> {
     this.active = false;
     // Catch exceptions here as pubsub is sometimes closed by process kill signals.
     if (this.ipfsId) {
@@ -192,7 +189,7 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
     await super.shutdown();
   }
 
-  async handleQueueMessage(message                           ) {
+  async handleQueueMessage(message:{from:string, data:Buffer}) {
     if (message.from === this.ipfsId) {
       return;
     }
@@ -201,13 +198,13 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
     }
     try {
       const queue = JSON.parse(Buffer.from(inflate(message.data)).toString('utf8'));
-      await this.process(queue);
+      await this.processSigned(queue);
     } catch (error) {
       this.emit('error', error);
     }
   }
 
-  handleHashMessage(message                           ) {
+  handleHashMessage(message:{from:string, data:Buffer}) {
     if (!this.active) {
       return;
     }
@@ -240,7 +237,7 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
     this.debouncedIpfsSync();
   }
 
-  async loadIpfsHash(hash       ) {
+  async loadIpfsHash(hash:string) {
     const processQueue = new PQueue({});
     const stream = this.ipfs.catReadableStream(hash, { timeout: 30000 });
     const parser = jsonStreamParser();
@@ -263,7 +260,7 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
       const d = deletions;
       insertions = [];
       deletions = [];
-      processQueue.add(() => this.process([i, d], true));
+      processQueue.add(() => this.processSigned([i, d], true));
     });
     try {
       await new Promise((resolve, reject) => {
@@ -302,10 +299,10 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
       this.emit('error', error);
       return;
     }
-    processQueue.add(() => this.process([insertions, deletions]));
+    processQueue.add(() => this.processSigned([insertions, deletions]));
     await processQueue.onIdle();
   }
 }
 
 
-module.exports = IpfsObservedRemoveMap;
+module.exports = IpfsSignedObservedRemoveMap;

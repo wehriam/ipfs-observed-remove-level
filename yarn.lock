@@ -7236,6 +7236,11 @@ json-stable-stringify-without-jsonify@^1.0.1:
   resolved "https://registry.yarnpkg.com/json-stable-stringify-without-jsonify/-/json-stable-stringify-without-jsonify-1.0.1.tgz#9db7b59496ad3f3cfef30a75142d2d930ad72651"
   integrity sha1-nbe1lJatPzz+8wp1FC0tkwrXJlE=
 
+json-stringify-deterministic@^1.0.1:
+  version "1.0.1"
+  resolved "https://registry.yarnpkg.com/json-stringify-deterministic/-/json-stringify-deterministic-1.0.1.tgz#3334798c374d723d46f7ba0e47d6e5e5ac8511f9"
+  integrity sha512-9Fg0OY3uyzozpvJ8TVbUk09PjzhT7O2Q5kEe30g6OrKhbA/Is92igcx0XDDX7E3yAwnIlUcYLRl+ZkVrBYVP7A==
+
 json-stringify-safe@^5.0.1, json-stringify-safe@~5.0.1:
   version "5.0.1"
   resolved "https://registry.yarnpkg.com/json-stringify-safe/-/json-stringify-safe-5.0.1.tgz#1296a2d58fd45f19a0f6ce01d65701e2c735b6eb"
@@ -9294,12 +9299,14 @@ observable-webworkers@^1.0.0:
   resolved "https://registry.yarnpkg.com/observable-webworkers/-/observable-webworkers-1.0.0.tgz#dcbd484a9644d512accc351962c6e710313fbb68"
   integrity sha512-+cECwCR8IEh8UY5nefQVLO9Cydqpk1izO+o7BABmKjXfJZyEOzBWY3ss5jbOPM6KmEa9aQExvAtTW6tVTOsNAQ==
 
-observed-remove-level@2.2.11:
-  version "2.2.11"
-  resolved "https://registry.yarnpkg.com/observed-remove-level/-/observed-remove-level-2.2.11.tgz#298e9299b41f52a25a71dacd4fdaf34d726d49d2"
-  integrity sha512-iE3YhMuFWfKgNwcX2/rtz6x67cz+GbMAZhUn75E69+jdrWqR+A2TRFHgeHO5O4HLi81dwblUHdLpAY13wSeNjw==
+observed-remove-level@2.2.18:
+  version "2.2.18"
+  resolved "https://registry.yarnpkg.com/observed-remove-level/-/observed-remove-level-2.2.18.tgz#de306e183cf5ec0d2714e95d08b5062dc41fc687"
+  integrity sha512-TLKihgKSz7FSzhKz1LxYDlrT2FzFkHR7s2nzzn5hda4+B3yYO0TVx2eytERq8LsGoW8cZnuRus5JrnAK/zJfeg==
   dependencies:
     "@bunchtogether/hash-object" "^1.0.2"
+    json-stringify-deterministic "^1.0.1"
+    node-rsa "^1.0.6"
     p-queue "^6.2.1"
 
 octokit-pagination-methods@^1.1.0:
