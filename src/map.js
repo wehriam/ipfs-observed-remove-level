@@ -13,6 +13,7 @@ type Options = {
   maxAge?:number,
   bufferPublishing?:number,
   namespace?: string,
+  format?: string,
   disableSync?: boolean
 };
 

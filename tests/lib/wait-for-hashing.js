@@ -1,8 +1,8 @@
 // @flow
 
-const { IpfsObservedRemoveMap } = require('../../src');
+const { IpfsObservedRemoveMap, IpfsSignedObservedRemoveMap } = require('../../src');
 
-module.exports = async (maps: Array<IpfsObservedRemoveMap<any>>) => new Promise((resolve, reject) => {
+module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObservedRemoveMap<any>>) => new Promise((resolve, reject) => {
   const areEqual = async () => {
     for (const map of maps) {
       if (map.isLoadingHashes) {

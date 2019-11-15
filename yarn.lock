@@ -9299,10 +9299,10 @@ observable-webworkers@^1.0.0:
   resolved "https://registry.yarnpkg.com/observable-webworkers/-/observable-webworkers-1.0.0.tgz#dcbd484a9644d512accc351962c6e710313fbb68"
   integrity sha512-+cECwCR8IEh8UY5nefQVLO9Cydqpk1izO+o7BABmKjXfJZyEOzBWY3ss5jbOPM6KmEa9aQExvAtTW6tVTOsNAQ==
 
-observed-remove-level@2.2.18:
-  version "2.2.18"
-  resolved "https://registry.yarnpkg.com/observed-remove-level/-/observed-remove-level-2.2.18.tgz#de306e183cf5ec0d2714e95d08b5062dc41fc687"
-  integrity sha512-TLKihgKSz7FSzhKz1LxYDlrT2FzFkHR7s2nzzn5hda4+B3yYO0TVx2eytERq8LsGoW8cZnuRus5JrnAK/zJfeg==
+observed-remove-level@2.2.21:
+  version "2.2.21"
+  resolved "https://registry.yarnpkg.com/observed-remove-level/-/observed-remove-level-2.2.21.tgz#0fec2d40787259f47c6e77017a37f3038c22118b"
+  integrity sha512-14YCZokYozkYj0UC/y6Mgc8ZbIP4MrSdRrIwTbFhemepUGXIg3frxV4lxZSG9IQVZdKdePnTlIGRtsw/BSfDGA==
   dependencies:
     "@bunchtogether/hash-object" "^1.0.2"
     json-stringify-deterministic "^1.0.1"
