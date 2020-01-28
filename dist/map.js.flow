@@ -46,6 +46,11 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     });
     this.remoteHashQueue = [];
     this.syncCache = new LruCache(100);
+    this.peersCache = new LruCache({
+      max: 100,
+      maxAge: 1000 * 60,
+    });
+    this.hasNewPeers = false;
     this.on('set', () => {
       delete this.ipfsHash;
     });
@@ -75,6 +80,8 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
   db: Object;
   ipfsHash: string | void;
   syncCache: LruCache;
+  peersCache: LruCache;
+  hasNewPeers: boolean;
   remoteHashQueue: Array<string>;
   isLoadingHashes: boolean;
   debouncedIpfsSync: () => Promise<void>;
@@ -141,7 +148,8 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
       if (!this.active) {
         return;
       }
-      if (!this.syncCache.has(hash, true)) {
+      if (!this.syncCache.has(hash, true) || this.hasNewPeers) {
+        this.hasNewPeers = false;
         this.syncCache.set(hash, true);
         await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'));
         this.emit('hash', hash);
@@ -226,6 +234,10 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     }
     if (message.from === this.ipfsId) {
       return;
+    }
+    if (!this.peersCache.has(message.from)) {
+      this.hasNewPeers = true;
+      this.peersCache.set(message.from, true);
     }
     const remoteHash = message.data.toString('utf8');
     this.remoteHashQueue.push(remoteHash);
