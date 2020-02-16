@@ -172,7 +172,7 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     const stream = new ReadableJsonDump(this.db.db.db, this.namespace);
     const files = this.ipfs.add(stream, { wrapWithDirectory: false, recursive: false, pin: false });
     for await (const file of files) {
-      this.ipfsHash = file.path;
+      this.ipfsHash = file.cid.toString();
       return this.ipfsHash;
     }
     throw new Error('Dump was not added to ipfs');
