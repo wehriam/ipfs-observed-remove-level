@@ -71,7 +71,7 @@ Create an observed-remove CRDT.
 
 #### Parameters
 
--   `db` **[Object](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Object)** 
+-   `db`  
 -   `ipfs` **[Object](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Object)?** Object implementing the [core IPFS API](https://github.com/ipfs/interface-ipfs-core#api), most likely a [js-ipfs](https://github.com/ipfs/js-ipfs) or [ipfs-http-client](https://github.com/ipfs/js-ipfs-http-client) object.
 -   `topic` **[String](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)?** IPFS pubub topic to use in synchronizing the CRDT.
 -   `entries` **Iterable&lt;V>** Iterable of initial values (optional, default `[]`)
