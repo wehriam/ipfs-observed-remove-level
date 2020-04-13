@@ -33,14 +33,14 @@ class ReadableJsonDump extends Readable {
     this.namespaceLength = Buffer.from(`${namespace}>`).length;
   }
 
-                          
+                                  
+                                             
+                                            
+                                 
                                      
-                                    
-                         
+                                      
+                                     
                              
-                              
-                             
-                     
 
   getInsertionPair()                                         {
     return new Promise((resolve) => {

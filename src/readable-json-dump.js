@@ -33,14 +33,14 @@ class ReadableJsonDump extends Readable {
     this.namespaceLength = Buffer.from(`${namespace}>`).length;
   }
 
-  namespaceLength: number;
-  insertionIterator: LevelDBIterator;
-  deletionIterator: LevelDBIterator;
-  didWritePairs: boolean;
-  didWriteDeletions: boolean;
-  skipInsertionComma: boolean;
-  skipDeletionComma: boolean;
-  isReading: boolean;
+  declare namespaceLength: number;
+  declare insertionIterator: LevelDBIterator;
+  declare deletionIterator: LevelDBIterator;
+  declare didWritePairs: boolean;
+  declare didWriteDeletions: boolean;
+  declare skipInsertionComma: boolean;
+  declare skipDeletionComma: boolean;
+  declare isReading: boolean;
 
   getInsertionPair():Promise<[Buffer | void, Buffer | void]> {
     return new Promise((resolve) => {
