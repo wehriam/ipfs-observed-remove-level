@@ -90,6 +90,7 @@ class ReadableJsonDump extends Readable {
           }
           const shouldKeepPushing = this.push(buffer);
           if (!shouldKeepPushing) {
+            this.isReading = false;
             return;
           }
         } else {
@@ -121,6 +122,7 @@ class ReadableJsonDump extends Readable {
           }
           const shouldKeepPushing = this.push(buffer);
           if (!shouldKeepPushing) {
+            this.isReading = false;
             return;
           }
         } else {
