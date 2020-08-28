@@ -3069,11 +3069,6 @@ de-indent@^1.0.2:
   resolved "https://registry.yarnpkg.com/de-indent/-/de-indent-1.0.2.tgz#b2038e846dc33baa5796128d0804b455b8c1e21d"
   integrity sha1-sgOOhG3DO6pXlhKNCAS0VbjB4h0=
 
-debounce@^1.2.0:
-  version "1.2.0"
-  resolved "https://registry.yarnpkg.com/debounce/-/debounce-1.2.0.tgz#44a540abc0ea9943018dc0eaa95cce87f65cd131"
-  integrity sha512-mYtLl1xfZLi1m4RtQYlZgJUNQjl4ZxVnHzIR8nLLgi4q1YT8o/WM+MK/f8yfcc9s5Ir5zRaPZyZU6xs1Syoocg==
-
 debug@4, debug@^4.0.1, debug@^4.1.0, debug@^4.1.1:
   version "4.1.1"
   resolved "https://registry.yarnpkg.com/debug/-/debug-4.1.1.tgz#3b72260255109c6b589cee050f1d516139664791"
@@ -6720,10 +6715,10 @@ object.values@^1.1.1:
     function-bind "^1.1.1"
     has "^1.0.3"
 
-observed-remove-level@2.2.26:
-  version "2.2.26"
-  resolved "https://registry.yarnpkg.com/observed-remove-level/-/observed-remove-level-2.2.26.tgz#477bb41b76482207163f2bc111a16c14d4ea4a09"
-  integrity sha512-DfV1F4uF3E66s3/c4Jx79/f/21RJaHxNDzadUncl95uZdP+6PFTr283If8yqbjq/a8vOF9SLrNwPlpCK4sdAHw==
+observed-remove-level@2.2.27:
+  version "2.2.27"
+  resolved "https://registry.yarnpkg.com/observed-remove-level/-/observed-remove-level-2.2.27.tgz#916e20bd3ef20cf25edd459a8cc443f5b403d2c1"
+  integrity sha512-QIw/J48SatjXdcJMmtxEUMAHiGHpg2rye7WzifD5LBOyLSff8sCEFfmXD3srHTAUT4r3gbACGP1Kl94Gi5ZaYQ==
   dependencies:
     "@bunchtogether/hash-object" "^1.0.3"
     json-stringify-deterministic "^1.0.1"
@@ -6904,11 +6899,6 @@ p-try@^2.0.0:
   version "2.2.0"
   resolved "https://registry.yarnpkg.com/p-try/-/p-try-2.2.0.tgz#cb2868540e313d61de58fafbe35ce9004d5540e6"
   integrity sha512-R4nPAVTAU0B9D35/Gk3uJf/7XYbQcyohSKdvAxIRSNghFl4e71hVoGnBNQz9cWaXxO2I10KTC+3jMdvvoKw6dQ==
-
-pako@^1.0.11:
-  version "1.0.11"
-  resolved "https://registry.yarnpkg.com/pako/-/pako-1.0.11.tgz#6c9599d340d54dfd3946380252a35705a6b992bf"
-  integrity sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw==
 
 pako@~0.2.0:
   version "0.2.9"
