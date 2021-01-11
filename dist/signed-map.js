@@ -38,6 +38,7 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
     }
     this.db = db;
     this.ipfs = ipfs;
+    this.abortController = new AbortController();
     this.topic = topic;
     this.active = true;
     this.disableSync = !!options.disableSync;
@@ -47,7 +48,6 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
       await this.initIpfs();
     });
     this.remoteHashQueue = [];
-    this.abortControllers = [];
     this.syncCache = new LruCache(100);
     this.peersCache = new LruCache({
       max: 100,
@@ -88,46 +88,51 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
                                          
                                    
                                                  
-                                                   
+                                           
 
   async initIpfs() {
-    const out = await this.ipfs.id();
-    this.ipfsId = out.id;
+    try {
+      const { id } = await this.ipfs.id({ signal: this.abortController.signal });
+      this.ipfsId = id;
+    } catch (error) {
+      if (error.type !== 'aborted') {
+        throw error;
+      }
+      return;
+    }
     this.on('publish', async (queue) => {
       if (!this.active) {
         return;
       }
       try {
         const message = Buffer.from(JSON.stringify(queue));
-        await this.ipfs.pubsub.publish(this.topic, message);
+        await this.ipfs.pubsub.publish(this.topic, message, { signal: this.abortController.signal });
       } catch (error) {
-        this.emit('error', error);
+        if (error.type !== 'aborted') {
+          this.emit('error', error);
+        }
       }
     });
-    const abortController = new AbortController();
-    this.abortControllers.push(abortController);
     try {
-      await this.ipfs.pubsub.subscribe(this.topic, this.boundHandleQueueMessage, { discover: true, signal: abortController.signal });
+      const promises = [this.ipfs.pubsub.subscribe(this.topic, this.boundHandleQueueMessage, { discover: true, signal: this.abortController.signal })];
       if (!this.disableSync) {
-        await this.ipfs.pubsub.subscribe(`${this.topic}:hash`, this.boundHandleHashMessage, { discover: true, signal: abortController.signal });
+        promises.push(this.ipfs.pubsub.subscribe(`${this.topic}:hash`, this.boundHandleHashMessage, { discover: true, signal: this.abortController.signal }));
         this.waitForPeersThenSendHash();
       }
+      await Promise.all(promises);
     } catch (error) {
       if (error.type !== 'aborted') {
         throw error;
       }
     }
-    this.abortControllers = this.abortControllers.filter((x) => x !== abortController);
   }
 
   async waitForPeersThenSendHash()               {
     if (!this.active) {
       return;
     }
-    const abortController = new AbortController();
-    this.abortControllers.push(abortController);
     try {
-      const peerIds = await this.ipfs.pubsub.peers(this.topic, { timeout: 10000, signal: abortController.signal });
+      const peerIds = await this.ipfs.pubsub.peers(this.topic, { timeout: 10000, signal: this.abortController.signal });
       if (peerIds.length > 0) {
         this.debouncedIpfsSync();
       } else {
@@ -147,7 +152,6 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
         });
       }
     }
-    this.abortControllers = this.abortControllers.filter((x) => x !== abortController);
   }
 
   /**
@@ -158,8 +162,6 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
     if (!this.active) {
       return;
     }
-    const abortController = new AbortController();
-    this.abortControllers.push(abortController);
     try {
       const hash = await this.getIpfsHash();
       if (!this.active) {
@@ -168,7 +170,7 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
       if (!this.syncCache.has(hash, true) || this.hasNewPeers) {
         this.hasNewPeers = false;
         this.syncCache.set(hash, true);
-        await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), { signal: abortController.signal });
+        await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), { signal: this.abortController.signal });
         this.emit('hash', hash);
       }
     } catch (error) {
@@ -176,7 +178,6 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
         this.emit('error', error);
       }
     }
-    this.abortControllers = this.abortControllers.filter((x) => x !== abortController);
   }
 
 
@@ -189,7 +190,7 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
       return this.ipfsHash;
     }
     const data = await this.dump();
-    const file = await this.ipfs.add(Buffer.from(JSON.stringify(data)), { wrapWithDirectory: false, recursive: false, pin: false });
+    const file = await this.ipfs.add(Buffer.from(JSON.stringify(data)), { wrapWithDirectory: false, recursive: false, pin: false, signal: this.abortController.signal });
     this.ipfsHash = file.cid.toString();
     return this.ipfsHash;
   }
@@ -199,7 +200,7 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
    * @return {number}
    */
   async ipfsPeerCount()                 {
-    const peerIds = await this.ipfs.pubsub.peers(this.topic);
+    const peerIds = await this.ipfs.pubsub.peers(this.topic, { signal: this.abortController.signal });
     return peerIds.length;
   }
 
@@ -209,28 +210,29 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
    */
   async shutdown()                {
     this.active = false;
-    for (const abortController of this.abortControllers) {
-      abortController.abort();
-    }
     // Catch exceptions here as pubsub is sometimes closed by process kill signals.
     if (this.ipfsId) {
       try {
-        await this.ipfs.pubsub.unsubscribe(this.topic, this.boundHandleQueueMessage);
+        const unsubscribeAbortController = new AbortController();
+        const timeout = setTimeout(() => {
+          unsubscribeAbortController.abort();
+        }, 5000);
+        const promises = [this.ipfs.pubsub.unsubscribe(this.topic, this.boundHandleQueueMessage, { signal: unsubscribeAbortController.signal })];
+        if (!this.disableSync) {
+          promises.push(this.ipfs.pubsub.unsubscribe(`${this.topic}:hash`, this.boundHandleHashMessage, { signal: unsubscribeAbortController.signal }));
+        }
+        await Promise.all(promises);
+        clearTimeout(timeout);
       } catch (error) {
         if (!notSubscribedRegex.test(error.message)) {
+          this.abortController.abort();
+          this.abortController = new AbortController();
           throw error;
         }
       }
-      if (!this.disableSync) {
-        try {
-          await this.ipfs.pubsub.unsubscribe(`${this.topic}:hash`, this.boundHandleHashMessage);
-        } catch (error) {
-          if (!notSubscribedRegex.test(error.message)) {
-            throw error;
-          }
-        }
-      }
     }
+    this.abortController.abort();
+    this.abortController = new AbortController();
     await super.shutdown();
   }
 
@@ -288,7 +290,7 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
 
   async loadIpfsHash(hash       ) {
     const processQueue = new PQueue({});
-    const stream = asyncIterableToReadableStream(this.ipfs.cat(new CID(hash), { timeout: 30000 }));
+    const stream = asyncIterableToReadableStream(this.ipfs.cat(new CID(hash), { timeout: 30000, signal: this.abortController.signal }));
     const parser = jsonStreamParser();
     const streamArray = jsonStreamArray();
     const pipeline = stream.pipe(parser);
@@ -345,7 +347,9 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
         });
       });
     } catch (error) {
-      this.emit('error', error);
+      if (error.type !== 'aborted') {
+        this.emit('error', error);
+      }
       return;
     }
     processQueue.add(() => this.processSigned([insertions, deletions]));
