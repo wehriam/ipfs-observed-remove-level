@@ -113,12 +113,13 @@ class ReadableJsonDump extends Readable {
       while (true) {
         const [id, key] = await this.getDeletionPair();
         if (id && key) {
+          const slicedId = id.slice(this.namespaceLength);
           let buffer;
           if (this.skipDeletionComma) {
             this.skipDeletionComma = false;
-            buffer = Buffer.concat([OPEN_BUFFER, id.slice(this.namespaceLength), MID_BUFFER, key, CLOSE_BUFFER]);
+            buffer = Buffer.concat([OPEN_BUFFER, slicedId, MID_BUFFER, key, CLOSE_BUFFER]);
           } else {
-            buffer = Buffer.concat([COMMA_BUFFER, OPEN_BUFFER, id.slice(this.namespaceLength), MID_BUFFER, key, CLOSE_BUFFER]);
+            buffer = Buffer.concat([COMMA_BUFFER, OPEN_BUFFER, slicedId, MID_BUFFER, key, CLOSE_BUFFER]);
           }
           const shouldKeepPushing = this.push(buffer);
           if (!shouldKeepPushing) {

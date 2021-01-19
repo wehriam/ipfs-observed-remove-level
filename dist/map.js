@@ -167,7 +167,7 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
       if (!this.active) {
         return;
       }
-      if (!this.syncCache.has(hash, true) || this.hasNewPeers) {
+      if (!this.syncCache.has(hash) || this.hasNewPeers) {
         this.hasNewPeers = false;
         this.syncCache.set(hash, true);
         await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), { signal: this.abortController.signal });
@@ -285,12 +285,14 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
       this.emit('error', error);
     }
     this.isLoadingHashes = false;
-    this.debouncedIpfsSync();
+    if (this.hasNewPeers) {
+      this.debouncedIpfsSync();
+    }
   }
 
   async loadIpfsHash(hash       ) {
     const processQueue = new PQueue({});
-    const stream = asyncIterableToReadableStream(this.ipfs.cat(new CID(hash), { timeout: 10000 }));
+    const stream = asyncIterableToReadableStream(this.ipfs.cat(new CID(hash), { timeout: 120000 }));
     const parser = jsonStreamParser();
     const streamArray = jsonStreamArray();
     const pipeline = stream.pipe(parser);
