@@ -3,7 +3,11 @@
 const { IpfsObservedRemoveMap, IpfsSignedObservedRemoveMap } = require('../../src');
 
 module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObservedRemoveMap<any>>) => new Promise((resolve, reject) => {
+  let didResolve = false;
   const areEqual = async () => {
+    if (didResolve) {
+      return false;
+    }
     for (const map of maps) {
       if (map.isLoadingHashes) {
         return false;
@@ -38,6 +42,7 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
       map.removeListener('error', handleError);
       map.removeListener('hash', handleHash);
     }
+    didResolve = true;
     resolve();
   };
   let timeout = setTimeout(handleTimeout, 100);
@@ -47,6 +52,7 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
       map.removeListener('error', handleError);
       map.removeListener('hash', handleHash);
     }
+    didResolve = true;
     reject(error);
   };
   const handleHash = async () => {
@@ -57,6 +63,7 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
         map.removeListener('hash', handleHash);
       }
       clearTimeout(timeout);
+      didResolve = true;
       resolve();
       return;
     }

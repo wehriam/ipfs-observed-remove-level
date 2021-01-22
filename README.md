@@ -61,6 +61,7 @@ const run = async () => {
     -   [Parameters](#parameters)
 -   [ipfsSync](#ipfssync)
 -   [getIpfsHash](#getipfshash)
+-   [getIpfsHashes](#getipfshashes)
 -   [ipfsPeerCount](#ipfspeercount)
 -   [shutdown](#shutdown)
 -   [IpfsObservedRemoveSet#readyPromise](#ipfsobservedremovesetreadypromise)
@@ -86,6 +87,12 @@ Publish an IPFS hash of an array containing all of the object's insertions and d
 Returns **[Array](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Array)&lt;[Array](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Array)&lt;any>>** 
 
 ### getIpfsHash
+
+Stores and returns an IPFS hash of the current insertions and deletions
+
+Returns **[Promise](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)&lt;[string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)>** 
+
+### getIpfsHashes
 
 Stores and returns an IPFS hash of the current insertions and deletions
 

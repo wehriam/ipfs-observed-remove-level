@@ -1,6 +1,7 @@
 // @flow
 
 const { Readable } = require('stream');
+const { hash32 } = require('farmhash');
 
 const OPEN_BUFFER = Buffer.from('["');
 const MID_BUFFER = Buffer.from('",');
@@ -31,6 +32,8 @@ class ReadableJsonDump extends Readable {
     this.skipInsertionComma = true;
     this.skipDeletionComma = true;
     this.namespaceLength = Buffer.from(`${namespace}>`).length;
+    this.buckets = (options && options.buckets) || 1;
+    this.bucket = (options && options.bucket) || 0;
   }
 
   declare namespaceLength: number;
@@ -41,6 +44,8 @@ class ReadableJsonDump extends Readable {
   declare skipInsertionComma: boolean;
   declare skipDeletionComma: boolean;
   declare isReading: boolean;
+  declare buckets: number;
+  declare bucket: number;
 
   getInsertionPair():Promise<[Buffer | void, Buffer | void]> {
     return new Promise((resolve) => {
@@ -81,6 +86,12 @@ class ReadableJsonDump extends Readable {
       while (true) {
         const [key, pair] = await this.getInsertionPair();
         if (key && pair) {
+          if (this.buckets > 1) {
+            const bucket = hash32(key) % this.buckets;
+            if (bucket !== this.bucket) {
+              continue;
+            }
+          }
           let buffer;
           if (this.skipInsertionComma) {
             this.skipInsertionComma = false;
@@ -113,6 +124,12 @@ class ReadableJsonDump extends Readable {
       while (true) {
         const [id, key] = await this.getDeletionPair();
         if (id && key) {
+          if (this.buckets > 1) {
+            const bucket = hash32(key) % this.buckets;
+            if (bucket !== this.bucket) {
+              continue;
+            }
+          }
           const slicedId = id.slice(this.namespaceLength);
           let buffer;
           if (this.skipDeletionComma) {

@@ -51,14 +51,14 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     this.syncCache = new LruCache(100);
     this.peersCache = new LruCache({
       max: 100,
-      maxAge: 1000 * 60,
+      maxAge: 1000 * 60 * 60,
     });
     this.hasNewPeers = false;
     this.on('set', () => {
-      delete this.ipfsHash;
+      delete this.ipfsHashes;
     });
     this.on('delete', () => {
-      delete this.ipfsHash;
+      delete this.ipfsHashes;
     });
     this.isLoadingHashes = false;
     this.debouncedIpfsSync = debounce(this.ipfsSync.bind(this), 1000);
@@ -81,7 +81,7 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
   declare boundHandleQueueMessage: (message:{from:string, data:Buffer}) => Promise<void>;
   declare boundHandleHashMessage: (message:{from:string, data:Buffer}) => Promise<void>;
   declare db: Object;
-  declare ipfsHash: string | void;
+  declare ipfsHashes: Array<string> | void;
   declare syncCache: LruCache;
   declare peersCache: LruCache;
   declare hasNewPeers: boolean;
@@ -163,15 +163,17 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
       return;
     }
     try {
-      const hash = await this.getIpfsHash();
+      const hashes = await this.getIpfsHashes();
       if (!this.active) {
         return;
       }
-      if (!this.syncCache.has(hash) || this.hasNewPeers) {
-        this.hasNewPeers = false;
-        this.syncCache.set(hash, true);
-        await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), { signal: this.abortController.signal });
-        this.emit('hash', hash);
+      for (const hash of hashes) {
+        if (!this.syncCache.has(hash) || this.hasNewPeers) {
+          this.hasNewPeers = false;
+          this.syncCache.set(hash, true);
+          await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), { signal: this.abortController.signal });
+          this.emit('hash', hash);
+        }
       }
     } catch (error) {
       if (error.type !== 'aborted') {
@@ -180,19 +182,35 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     }
   }
 
+  /**
+   * Stores and returns an IPFS hash of the current insertions and deletions
+   * @return {Promise<string>}
+   */
+  async getIpfsHash():Promise<Array<string>> {
+    const stream = new ReadableJsonDump(this.db.db.db, this.namespace);
+    const file = await this.ipfs.add(stream, { wrapWithDirectory: false, recursive: false, pin: false, signal: this.abortController.signal });
+    return file.cid.toString();
+  }
 
   /**
    * Stores and returns an IPFS hash of the current insertions and deletions
    * @return {Promise<string>}
    */
-  async getIpfsHash():Promise<string> {
-    if (this.ipfsHash) {
-      return this.ipfsHash;
+  async getIpfsHashes():Promise<Array<string>> {
+    if (this.ipfsHashes) {
+      return this.ipfsHashes;
     }
-    const stream = new ReadableJsonDump(this.db.db.db, this.namespace);
-    const file = await this.ipfs.add(stream, { wrapWithDirectory: false, recursive: false, pin: false, signal: this.abortController.signal });
-    this.ipfsHash = file.cid.toString();
-    return this.ipfsHash;
+    const ipfsHashes = [];
+    for (let i = 0; i < 8; i += 1) {
+      const stream = new ReadableJsonDump(this.db.db.db, this.namespace, { buckets: 8, bucket: i });
+      const file = await this.ipfs.add(stream, { wrapWithDirectory: false, recursive: false, pin: false, signal: this.abortController.signal });
+      ipfsHashes.push(file.cid.toString());
+      if (!this.active) {
+        break;
+      }
+    }
+    this.ipfsHashes = ipfsHashes;
+    return ipfsHashes;
   }
 
   /**
