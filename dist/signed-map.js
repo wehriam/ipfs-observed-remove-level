@@ -9,6 +9,10 @@ const { default: PQueue } = require('p-queue');
 const LruCache = require('lru-cache');
 const { debounce } = require('lodash');
 const asyncIterableToReadableStream = require('async-iterable-to-readable-stream');
+const {
+  SerializeTransform,
+  DeserializeTransform,
+} = require('@bunchtogether/chunked-stream-transformers');
 
                 
                  
@@ -16,6 +20,7 @@ const asyncIterableToReadableStream = require('async-iterable-to-readable-stream
                      
            
                   
+                        
                        
   
 
@@ -30,12 +35,14 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
    * @param {Object} [options={}]
    * @param {String} [options.maxAge=5000] Max age of insertion/deletion identifiers
    * @param {String} [options.bufferPublishing=20] Interval by which to buffer 'publish' events
+   * @param {boolean} [options.chunkPubSub=false] Chunk pubsub messages for values greater than 1 MB
    */
   constructor(db       , ipfs       , topic       , entries                                        , options          = {}) {
     super(db, entries, options);
     if (!ipfs) {
       throw new Error("Missing required argument 'ipfs'");
     }
+    this.chunkPubSub = !!options.chunkPubSub;
     this.db = db;
     this.ipfs = ipfs;
     this.abortController = new AbortController();
@@ -62,6 +69,37 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
     });
     this.isLoadingHashes = false;
     this.debouncedIpfsSync = debounce(this.ipfsSync.bind(this), 1000);
+    this.serializeTransform = new SerializeTransform({
+      autoDestroy: false,
+      maxChunkSize: 1024 * 512,
+    });
+    this.serializeTransform.on('data', async (messageSlice) => {
+      try {
+        await this.ipfs.pubsub.publish(this.topic, messageSlice, { signal: this.abortController.signal });
+      } catch (error) {
+        if (error.type !== 'aborted') {
+          this.emit('error', error);
+        }
+      }
+    });
+    this.serializeTransform.on('error', (error) => {
+      this.emit('error', error);
+    });
+    this.deserializeTransform = new DeserializeTransform({
+      autoDestroy: false,
+      timeout: 10000,
+    });
+    this.deserializeTransform.on('error', (error) => {
+      this.emit('error', error);
+    });
+    this.deserializeTransform.on('data', async (message) => {
+      try {
+        const queue = JSON.parse(message.toString('utf8'));
+        await this.processSigned(queue);
+      } catch (error) {
+        this.emit('error', error);
+      }
+    });
   }
 
   /**
@@ -89,6 +127,9 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
                                    
                                                  
                                            
+                               
+                                                 
+                                                     
 
   async initIpfs() {
     try {
@@ -104,12 +145,17 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
       if (!this.active) {
         return;
       }
-      try {
+      if (this.chunkPubSub) {
         const message = Buffer.from(JSON.stringify(queue));
-        await this.ipfs.pubsub.publish(this.topic, message, { signal: this.abortController.signal });
-      } catch (error) {
-        if (error.type !== 'aborted') {
-          this.emit('error', error);
+        this.serializeTransform.write(message);
+      } else {
+        try {
+          const message = Buffer.from(JSON.stringify(queue));
+          await this.ipfs.pubsub.publish(this.topic, message, { signal: this.abortController.signal });
+        } catch (error) {
+          if (error.type !== 'aborted') {
+            this.emit('error', error);
+          }
         }
       }
     });
@@ -233,6 +279,8 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
     }
     this.abortController.abort();
     this.abortController = new AbortController();
+    this.serializeTransform.destroy();
+    this.deserializeTransform.destroy();
     await super.shutdown();
   }
 
@@ -243,11 +291,15 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
     if (!this.active) {
       return;
     }
-    try {
-      const queue = JSON.parse(Buffer.from(message.data).toString('utf8'));
-      await this.processSigned(queue);
-    } catch (error) {
-      this.emit('error', error);
+    if (this.chunkPubSub) {
+      this.deserializeTransform.write(message.data);
+    } else {
+      try {
+        const queue = JSON.parse(Buffer.from(message.data).toString('utf8'));
+        await this.processSigned(queue);
+      } catch (error) {
+        this.emit('error', error);
+      }
     }
   }
 

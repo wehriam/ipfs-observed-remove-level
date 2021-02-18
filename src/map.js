@@ -10,13 +10,18 @@ const ReadableJsonDump = require('./readable-json-dump');
 const LruCache = require('lru-cache');
 const { debounce } = require('lodash');
 const asyncIterableToReadableStream = require('async-iterable-to-readable-stream');
+const {
+  SerializeTransform,
+  DeserializeTransform,
+} = require('@bunchtogether/chunked-stream-transformers');
 
 type Options = {
   maxAge?:number,
   bufferPublishing?:number,
   namespace?: string,
   format?: string,
-  disableSync?: boolean
+  disableSync?: boolean,
+  chunkPubSub?: boolean
 };
 
 const notSubscribedRegex = /Not subscribed/;
@@ -30,12 +35,14 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
    * @param {Object} [options={}]
    * @param {String} [options.maxAge=5000] Max age of insertion/deletion identifiers
    * @param {String} [options.bufferPublishing=20] Interval by which to buffer 'publish' events
+   * @param {boolean} [options.chunkPubSub=false] Chunk pubsub messages for values greater than 1 MB
    */
   constructor(db:Object, ipfs:Object, topic:string, entries?: Iterable<[string, V]>, options?:Options = {}) {
     super(db, entries, options);
     if (!ipfs) {
       throw new Error("Missing required argument 'ipfs'");
     }
+    this.chunkPubSub = !!options.chunkPubSub;
     this.db = db;
     this.ipfs = ipfs;
     this.abortController = new AbortController();
@@ -62,6 +69,37 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     });
     this.isLoadingHashes = false;
     this.debouncedIpfsSync = debounce(this.ipfsSync.bind(this), 1000);
+    this.serializeTransform = new SerializeTransform({
+      autoDestroy: false,
+      maxChunkSize: 1024 * 512,
+    });
+    this.serializeTransform.on('data', async (messageSlice) => {
+      try {
+        await this.ipfs.pubsub.publish(this.topic, messageSlice, { signal: this.abortController.signal });
+      } catch (error) {
+        if (error.type !== 'aborted') {
+          this.emit('error', error);
+        }
+      }
+    });
+    this.serializeTransform.on('error', (error) => {
+      this.emit('error', error);
+    });
+    this.deserializeTransform = new DeserializeTransform({
+      autoDestroy: false,
+      timeout: 10000,
+    });
+    this.deserializeTransform.on('error', (error) => {
+      this.emit('error', error);
+    });
+    this.deserializeTransform.on('data', async (message) => {
+      try {
+        const queue = JSON.parse(message.toString('utf8'));
+        await this.process(queue);
+      } catch (error) {
+        this.emit('error', error);
+      }
+    });
   }
 
   /**
@@ -89,6 +127,9 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
   declare isLoadingHashes: boolean;
   declare debouncedIpfsSync: () => Promise<void>;
   declare abortController: AbortController;
+  declare chunkPubSub: boolean;
+  declare serializeTransform: SerializeTransform;
+  declare deserializeTransform: DeserializeTransform;
 
   async initIpfs() {
     try {
@@ -104,12 +145,17 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
       if (!this.active) {
         return;
       }
-      try {
+      if (this.chunkPubSub) {
         const message = Buffer.from(JSON.stringify(queue));
-        await this.ipfs.pubsub.publish(this.topic, message, { signal: this.abortController.signal });
-      } catch (error) {
-        if (error.type !== 'aborted') {
-          this.emit('error', error);
+        this.serializeTransform.write(message);
+      } else {
+        try {
+          const message = Buffer.from(JSON.stringify(queue));
+          await this.ipfs.pubsub.publish(this.topic, message, { signal: this.abortController.signal });
+        } catch (error) {
+          if (error.type !== 'aborted') {
+            this.emit('error', error);
+          }
         }
       }
     });
@@ -251,6 +297,8 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     }
     this.abortController.abort();
     this.abortController = new AbortController();
+    this.serializeTransform.destroy();
+    this.deserializeTransform.destroy();
     await super.shutdown();
   }
 
@@ -261,11 +309,15 @@ class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-
     if (!this.active) {
       return;
     }
-    try {
-      const queue = JSON.parse(Buffer.from(message.data).toString('utf8'));
-      await this.process(queue);
-    } catch (error) {
-      this.emit('error', error);
+    if (this.chunkPubSub) {
+      this.deserializeTransform.write(message.data);
+    } else {
+      try {
+        const queue = JSON.parse(Buffer.from(message.data).toString('utf8'));
+        await this.process(queue);
+      } catch (error) {
+        this.emit('error', error);
+      }
     }
   }
 
