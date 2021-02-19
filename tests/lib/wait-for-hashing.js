@@ -10,8 +10,7 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
       return false;
     }
     for (const map of maps) {
-      if (map.isLoadingHashes) {
-        // console.log('isLoadingHashes');
+      if (map.hashLoadQueue.pending > 0 || map.hashLoadQueue.size > 0) {
         return false;
       }
     }
@@ -19,13 +18,11 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
       const hash = await maps[0].getIpfsHash();
       for (let i = 1; i < maps.length; i += 1) {
         if (await maps[i].getIpfsHash() !== hash) {
-          // console.log('hash does not match');
           return false;
         }
       }
       for (const map of maps) {
-        if (map.isLoadingHashes) {
-          // console.log('isLoadingHashes 2');
+        if (map.hashLoadQueue.pending > 0 || map.hashLoadQueue.size > 0) {
           return false;
         }
       }

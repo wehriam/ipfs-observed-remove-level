@@ -54,7 +54,6 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
     this.readyPromise = this.readyPromise.then(async () => {
       await this.initIpfs();
     });
-    this.remoteHashQueue = [];
     this.syncCache = new LruCache(100);
     this.peersCache = new LruCache({
       max: 100,
@@ -67,7 +66,6 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
     this.on('delete', () => {
       delete this.ipfsHash;
     });
-    this.isLoadingHashes = false;
     this.debouncedIpfsSync = debounce(this.ipfsSync.bind(this), 1000);
     this.serializeTransform = new SerializeTransform({
       autoDestroy: false,
@@ -100,6 +98,13 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
         this.emit('error', error);
       }
     });
+    this.hashLoadQueue = new PQueue({});
+    this.hashLoadQueue.on('idle', async () => {
+      if (this.hasNewPeers) {
+        this.debouncedIpfsSync();
+      }
+      this.emit('hashesloaded');
+    });
   }
 
   /**
@@ -123,13 +128,12 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
   declare syncCache: LruCache;
   declare peersCache: LruCache;
   declare hasNewPeers: boolean;
-  declare remoteHashQueue: Array<string>;
-  declare isLoadingHashes: boolean;
   declare debouncedIpfsSync: () => Promise<void>;
   declare abortController: AbortController;
   declare chunkPubSub: boolean;
   declare serializeTransform: SerializeTransform;
   declare deserializeTransform: DeserializeTransform;
+  declare hashLoadQueue: PQueue;
 
   async initIpfs() {
     try {
@@ -214,11 +218,11 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
         return;
       }
       if (!this.syncCache.has(hash, true) || this.hasNewPeers) {
-        this.hasNewPeers = false;
         this.syncCache.set(hash, true);
         await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), { signal: this.abortController.signal });
         this.emit('hash', hash);
       }
+      this.hasNewPeers = false;
     } catch (error) {
       if (error.type !== 'aborted') {
         this.emit('error', error);
@@ -316,33 +320,19 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
       this.peersCache.set(message.from, true);
     }
     const remoteHash = Buffer.from(message.data).toString('utf8');
-    this.remoteHashQueue.push(remoteHash);
-    this.loadIpfsHashes();
-  }
-
-  async loadIpfsHashes() {
-    if (this.isLoadingHashes) {
+    if (this.syncCache.has(remoteHash)) {
       return;
     }
-    this.isLoadingHashes = true;
+    console.log({ remoteHash });
+    this.syncCache.set(remoteHash, true);
     try {
-      while (this.remoteHashQueue.length > 0 && this.active && this.isLoadingHashes) {
-        const remoteHash = this.remoteHashQueue.pop();
-        if (this.syncCache.has(remoteHash)) {
-          continue;
-        }
-        this.syncCache.set(remoteHash, true);
-        await this.loadIpfsHash(remoteHash);
-      }
+      this.hashLoadQueue.add(() => this.loadIpfsHash(remoteHash));
     } catch (error) {
       this.emit('error', error);
     }
-    this.isLoadingHashes = false;
-    this.debouncedIpfsSync();
   }
 
   async loadIpfsHash(hash:string) {
-    const processQueue = new PQueue({});
     const stream = asyncIterableToReadableStream(this.ipfs.cat(new CID(hash), { timeout: 30000, signal: this.abortController.signal }));
     const parser = jsonStreamParser();
     const streamArray = jsonStreamArray();
@@ -364,7 +354,7 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
       const d = deletions;
       insertions = [];
       deletions = [];
-      processQueue.add(() => this.processSigned([i, d], true));
+      this.processSigned([i, d], true);
     });
     try {
       await new Promise((resolve, reject) => {
@@ -405,8 +395,8 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
       }
       return;
     }
-    processQueue.add(() => this.processSigned([insertions, deletions]));
-    await processQueue.onIdle();
+    this.processSigned([insertions, deletions]);
+    await this.signedProcessQueue.onIdle();
   }
 }
 

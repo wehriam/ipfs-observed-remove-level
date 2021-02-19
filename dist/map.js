@@ -54,7 +54,6 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
     this.readyPromise = this.readyPromise.then(async () => {
       await this.initIpfs();
     });
-    this.remoteHashQueue = [];
     this.syncCache = new LruCache(100);
     this.peersCache = new LruCache({
       max: 100,
@@ -63,11 +62,12 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
     this.hasNewPeers = false;
     this.on('set', () => {
       delete this.ipfsHashes;
+      delete this.ipfsHash;
     });
     this.on('delete', () => {
       delete this.ipfsHashes;
+      delete this.ipfsHash;
     });
-    this.isLoadingHashes = false;
     this.debouncedIpfsSync = debounce(this.ipfsSync.bind(this), 1000);
     this.serializeTransform = new SerializeTransform({
       autoDestroy: false,
@@ -100,6 +100,13 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
         this.emit('error', error);
       }
     });
+    this.hashLoadQueue = new PQueue({});
+    this.hashLoadQueue.on('idle', async () => {
+      if (this.hasNewPeers) {
+        this.debouncedIpfsSync();
+      }
+      this.emit('hashesloaded');
+    });
   }
 
   /**
@@ -120,16 +127,16 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
                                                                                         
                      
                                            
+                                  
                               
                                
                                
-                                         
-                                   
                                                  
                                            
                                
                                                  
                                                      
+                                
 
   async initIpfs() {
     try {
@@ -215,12 +222,12 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
       }
       for (const hash of hashes) {
         if (!this.syncCache.has(hash) || this.hasNewPeers) {
-          this.hasNewPeers = false;
           this.syncCache.set(hash, true);
           await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), { signal: this.abortController.signal });
           this.emit('hash', hash);
         }
       }
+      this.hasNewPeers = false;
     } catch (error) {
       if (error.type !== 'aborted') {
         this.emit('error', error);
@@ -232,10 +239,14 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
    * Stores and returns an IPFS hash of the current insertions and deletions
    * @return {Promise<string>}
    */
-  async getIpfsHash()                        {
+  async getIpfsHash()                 {
+    if (this.ipfsHash) {
+      return this.ipfsHash;
+    }
     const stream = new ReadableJsonDump(this.db.db.db, this.namespace);
     const file = await this.ipfs.add(stream, { wrapWithDirectory: false, recursive: false, pin: false, signal: this.abortController.signal });
-    return file.cid.toString();
+    this.ipfsHash = file.cid.toString();
+    return this.ipfsHash;
   }
 
   /**
@@ -334,35 +345,18 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
       this.peersCache.set(message.from, true);
     }
     const remoteHash = Buffer.from(message.data).toString('utf8');
-    this.remoteHashQueue.push(remoteHash);
-    this.loadIpfsHashes();
-  }
-
-  async loadIpfsHashes() {
-    if (this.isLoadingHashes) {
+    if (this.syncCache.has(remoteHash)) {
       return;
     }
-    this.isLoadingHashes = true;
+    this.syncCache.set(remoteHash, true);
     try {
-      while (this.remoteHashQueue.length > 0 && this.active && this.isLoadingHashes) {
-        const remoteHash = this.remoteHashQueue.pop();
-        if (this.syncCache.has(remoteHash)) {
-          continue;
-        }
-        this.syncCache.set(remoteHash, true);
-        await this.loadIpfsHash(remoteHash);
-      }
+      this.hashLoadQueue.add(() => this.loadIpfsHash(remoteHash));
     } catch (error) {
       this.emit('error', error);
-    }
-    this.isLoadingHashes = false;
-    if (this.hasNewPeers) {
-      this.debouncedIpfsSync();
     }
   }
 
   async loadIpfsHash(hash       ) {
-    const processQueue = new PQueue({});
     const stream = asyncIterableToReadableStream(this.ipfs.cat(new CID(hash), { timeout: 120000 }));
     const parser = jsonStreamParser();
     const streamArray = jsonStreamArray();
@@ -384,7 +378,7 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
       const d = deletions;
       insertions = [];
       deletions = [];
-      processQueue.add(() => this.process([i, d], true));
+      this.process([i, d], true);
     });
     try {
       await new Promise((resolve, reject) => {
@@ -425,8 +419,8 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
       }
       return;
     }
-    processQueue.add(() => this.process([insertions, deletions]));
-    await processQueue.onIdle();
+    this.process([insertions, deletions]);
+    await this.processQueue.onIdle();
   }
 }
 
