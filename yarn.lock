@@ -1032,10 +1032,10 @@
   resolved "https://registry.yarnpkg.com/@bcoe/v8-coverage/-/v8-coverage-0.2.3.tgz#75a2e8b51cb758a7553d6804a5932d7aace75c39"
   integrity sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==
 
-"@bunchtogether/chunked-stream-transformers@1.0.1":
-  version "1.0.1"
-  resolved "https://registry.yarnpkg.com/@bunchtogether/chunked-stream-transformers/-/chunked-stream-transformers-1.0.1.tgz#b3b90afa0abe130a5dd5db3defa721a1e1e32aa1"
-  integrity sha512-Xg/H7Xoj7qxqRhzzSODfgg2cBTgM9kCXiIbMvDQahvJIOtv3bwoV/5ICG+ue8JyrnEfJPxKy/hfc630aIOXHNA==
+"@bunchtogether/chunked-stream-transformers@1.0.2":
+  version "1.0.2"
+  resolved "https://registry.yarnpkg.com/@bunchtogether/chunked-stream-transformers/-/chunked-stream-transformers-1.0.2.tgz#4632686b65c001ee5ece49fbabb6afd69aa5e01b"
+  integrity sha512-1hAWdOAzU61YRZgivHkuyAdGDHyPeRZMSRA7VSq0KPnR75MYqR02lcs1SS6Nz1NxlRpv8866wIhEGikQbTmaRQ==
 
 "@bunchtogether/hash-object@^1.0.3":
   version "1.0.3"
