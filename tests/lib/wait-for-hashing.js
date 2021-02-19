@@ -11,7 +11,7 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
     }
     for (const map of maps) {
       if (map.isLoadingHashes) {
-        console.log('isLoadingHashes');
+        // console.log('isLoadingHashes');
         return false;
       }
     }
@@ -19,19 +19,19 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
       const hash = await maps[0].getIpfsHash();
       for (let i = 1; i < maps.length; i += 1) {
         if (await maps[i].getIpfsHash() !== hash) {
-          console.log('hash does not match');
+          // console.log('hash does not match');
           return false;
         }
       }
       for (const map of maps) {
         if (map.isLoadingHashes) {
-          console.log('isLoadingHashes 2');
+          // console.log('isLoadingHashes 2');
           return false;
         }
       }
     } catch (error) {
       if (error.type === 'aborted') {
-        console.log('aborted');
+        // console.log('aborted');
         return false;
       }
       throw error;
@@ -45,7 +45,7 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
     }
     for (const map of maps) {
       map.removeListener('error', handleError);
-      map.removeListener('hash', handleHash);
+      map.removeListener('hash', handleHashesLoaded);
     }
     didResolve = true;
     resolve();
@@ -55,17 +55,17 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
     clearTimeout(timeout);
     for (const map of maps) {
       map.removeListener('error', handleError);
-      map.removeListener('hash', handleHash);
+      map.removeListener('hash', handleHashesLoaded);
     }
     didResolve = true;
     reject(error);
   };
-  const handleHash = debounce(async () => {
+  const handleHashesLoaded = debounce(async () => {
     clearTimeout(timeout);
     if (await areEqual()) {
       for (const map of maps) {
         map.removeListener('error', handleError);
-        map.removeListener('hash', handleHash);
+        map.removeListener('hash', handleHashesLoaded);
       }
       clearTimeout(timeout);
       didResolve = true;
@@ -76,6 +76,6 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
   }, 100);
   for (const map of maps) {
     map.on('error', handleError);
-    map.on('hashesloaded', handleHash);
+    map.on('hashesloaded', handleHashesLoaded);
   }
 });

@@ -14,8 +14,6 @@ jest.setTimeout(60000);
 const COUNT = 10;
 let nodes = [];
 
-process.argv.push('--inspect');
-
 describe('Map Scale', () => {
   let db;
   let maps;
@@ -132,9 +130,7 @@ describe('Map Scale', () => {
       maps.push(map);
       map.on('error', console.error);
     }
-    console.log('waiting for ready', Date.now());
     await Promise.all(maps.map((map) => map.readyPromise));
-    console.log('ready', Date.now());
     for (let i = 0; i < 1000; i += 1) {
       const map = maps[Math.floor(Math.random() * maps.length)];
       await map.set(uuid.v4(), generateValue());
