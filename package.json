@@ -1,6 +1,6 @@
 {
   "name": "ipfs-observed-remove-level",
-  "version": "2.2.40",
+  "version": "2.2.41",
   "main": "dist/index.js",
   "repository": "git@github.com:wehriam/ipfs-observed-remove-level",
   "author": "John Wehr <johnwehr@gmail.com>",
@@ -63,7 +63,7 @@
     "uuid": "^7.0.3"
   },
   "dependencies": {
-    "@bunchtogether/chunked-stream-transformers": "^1.0.0",
+    "@bunchtogether/chunked-stream-transformers": "1.0.1",
     "abort-controller": "^3.0.0",
     "async-iterable-to-readable-stream": "^1.0.0",
     "cids": "^1.1.4",

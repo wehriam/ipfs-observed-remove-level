@@ -1,6 +1,7 @@
 // @flow
 
 const { IpfsObservedRemoveMap, IpfsSignedObservedRemoveMap } = require('../../src');
+const { debounce } = require('lodash');
 
 module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObservedRemoveMap<any>>) => new Promise((resolve, reject) => {
   let didResolve = false;
@@ -10,6 +11,7 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
     }
     for (const map of maps) {
       if (map.isLoadingHashes) {
+        console.log('isLoadingHashes');
         return false;
       }
     }
@@ -17,16 +19,19 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
       const hash = await maps[0].getIpfsHash();
       for (let i = 1; i < maps.length; i += 1) {
         if (await maps[i].getIpfsHash() !== hash) {
+          console.log('hash does not match');
           return false;
         }
       }
       for (const map of maps) {
         if (map.isLoadingHashes) {
+          console.log('isLoadingHashes 2');
           return false;
         }
       }
     } catch (error) {
       if (error.type === 'aborted') {
+        console.log('aborted');
         return false;
       }
       throw error;
@@ -55,7 +60,7 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
     didResolve = true;
     reject(error);
   };
-  const handleHash = async () => {
+  const handleHash = debounce(async () => {
     clearTimeout(timeout);
     if (await areEqual()) {
       for (const map of maps) {
@@ -68,9 +73,9 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
       return;
     }
     timeout = setTimeout(handleTimeout, 100);
-  };
+  }, 100);
   for (const map of maps) {
     map.on('error', handleError);
-    map.on('hash', handleHash);
+    map.on('hashesloaded', handleHash);
   }
 });

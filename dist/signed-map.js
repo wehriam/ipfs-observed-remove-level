@@ -279,6 +279,7 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
     }
     this.abortController.abort();
     this.abortController = new AbortController();
+    await this.deserializeTransform.onIdle();
     this.serializeTransform.destroy();
     this.deserializeTransform.destroy();
     await super.shutdown();

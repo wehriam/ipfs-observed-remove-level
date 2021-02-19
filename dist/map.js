@@ -160,9 +160,9 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
       }
     });
     try {
-      const promises = [this.ipfs.pubsub.subscribe(this.topic, this.boundHandleQueueMessage, { discover: true })];
+      const promises = [this.ipfs.pubsub.subscribe(this.topic, this.boundHandleQueueMessage, { discover: true, signal: this.abortController.signal })];
       if (!this.disableSync) {
-        promises.push(this.ipfs.pubsub.subscribe(`${this.topic}:hash`, this.boundHandleHashMessage, { discover: true }));
+        promises.push(this.ipfs.pubsub.subscribe(`${this.topic}:hash`, this.boundHandleHashMessage, { discover: true, signal: this.abortController.signal }));
         this.waitForPeersThenSendHash();
       }
       await Promise.all(promises);
@@ -281,9 +281,9 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
         const timeout = setTimeout(() => {
           unsubscribeAbortController.abort();
         }, 5000);
-        const promises = [this.ipfs.pubsub.unsubscribe(this.topic, this.boundHandleQueueMessage)];
+        const promises = [this.ipfs.pubsub.unsubscribe(this.topic, this.boundHandleQueueMessage, { signal: unsubscribeAbortController.signal })];
         if (!this.disableSync) {
-          promises.push(this.ipfs.pubsub.unsubscribe(`${this.topic}:hash`, this.boundHandleHashMessage));
+          promises.push(this.ipfs.pubsub.unsubscribe(`${this.topic}:hash`, this.boundHandleHashMessage, { signal: unsubscribeAbortController.signal }));
         }
         await Promise.all(promises);
         clearTimeout(timeout);
@@ -297,6 +297,7 @@ class IpfsObservedRemoveMap    extends ObservedRemoveMap    { // eslint-disable-
     }
     this.abortController.abort();
     this.abortController = new AbortController();
+    await this.deserializeTransform.onIdle();
     this.serializeTransform.destroy();
     this.deserializeTransform.destroy();
     await super.shutdown();
