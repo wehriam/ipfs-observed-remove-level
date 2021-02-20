@@ -8,7 +8,7 @@ const { streamArray: jsonStreamArray } = require('stream-json/streamers/StreamAr
 const { default: PQueue } = require('p-queue');
 const LruCache = require('lru-cache');
 const { debounce } = require('lodash');
-const asyncIterableToReadableStream = require('async-iterable-to-readable-stream');
+const { Readable } = require('stream');
 const {
   SerializeTransform,
   DeserializeTransform,
@@ -333,7 +333,8 @@ class IpfsSignedObservedRemoveMap    extends ObservedRemoveMap    { // eslint-di
   }
 
   async loadIpfsHash(hash       ) {
-    const stream = asyncIterableToReadableStream(this.ipfs.cat(new CID(hash), { timeout: 30000, signal: this.abortController.signal }));
+    // $FlowFixMe
+    const stream = Readable.from(this.ipfs.cat(new CID(hash), { timeout: 30000, signal: this.abortController.signal }));
     const parser = jsonStreamParser();
     const streamArray = jsonStreamArray();
     const pipeline = stream.pipe(parser);
