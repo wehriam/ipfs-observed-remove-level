@@ -73,7 +73,7 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
     });
     this.serializeTransform.on('data', async (messageSlice) => {
       try {
-        await this.ipfs.pubsub.publish(this.topic, messageSlice, { signal: this.abortController.signal });
+        await this.ipfs.pubsub.publish(this.topic, messageSlice.toString('base64'), { signal: this.abortController.signal });
       } catch (error) {
         if (error.type !== 'aborted') {
           this.emit('error', error);
@@ -297,7 +297,7 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
       return;
     }
     if (this.chunkPubSub) {
-      this.deserializeTransform.write(message.data);
+      this.deserializeTransform.write(Buffer.from(Buffer.from(message.data).toString(), 'base64'));
     } else {
       try {
         const queue = JSON.parse(Buffer.from(message.data).toString('utf8'));
