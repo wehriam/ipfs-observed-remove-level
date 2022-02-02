@@ -1,15 +1,15 @@
 // @flow
 
-const os = require('os');
-const path = require('path');
-const uuid = require('uuid');
-const level = require('level');
-const { getSwarm, closeAllNodes } = require('./lib/ipfs');
-const { IpfsObservedRemoveMap } = require('../src');
-const { generateValue } = require('./lib/values');
-const expect = require('expect');
-const waitForHashing = require('./lib/wait-for-hashing');
-require('./lib/async-iterator-comparison');
+import os from 'os';
+import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import level from 'level';
+import expect from 'expect';
+import { getSwarm, closeAllNodes } from './lib/ipfs';
+import { IpfsObservedRemoveMap } from '../src';
+import { generateValue } from './lib/values';
+import waitForHashing from './lib/wait-for-hashing';
+import './lib/async-iterator-comparison';
 
 jest.setTimeout(30000);
 
@@ -20,7 +20,7 @@ describe('IPFS Map', () => {
 
   beforeAll(async () => {
     nodes = await getSwarm(2);
-    const location = path.join(os.tmpdir(), uuid.v4());
+    const location = path.join(os.tmpdir(), uuidv4());
     db = level(location, { valueEncoding: 'json' });
   });
 
@@ -30,15 +30,15 @@ describe('IPFS Map', () => {
   });
 
   test('Synchronize maps', async () => {
-    const topic = uuid.v4();
-    const keyX = uuid.v4();
-    const keyY = uuid.v4();
-    const keyZ = uuid.v4();
+    const topic = uuidv4();
+    const keyX = uuidv4();
+    const keyY = uuidv4();
+    const keyZ = uuidv4();
     const valueX = generateValue();
     const valueY = generateValue();
     const valueZ = generateValue();
-    const alice: IpfsObservedRemoveMap<Object> = new IpfsObservedRemoveMap(db, nodes[0], topic, [], { namespace: uuid.v4() });
-    const bob: IpfsObservedRemoveMap<Object> = new IpfsObservedRemoveMap(db, nodes[1], topic, [], { namespace: uuid.v4() });
+    const alice: IpfsObservedRemoveMap<Object> = new IpfsObservedRemoveMap(db, nodes[0], topic, [], { namespace: uuidv4() });
+    const bob: IpfsObservedRemoveMap<Object> = new IpfsObservedRemoveMap(db, nodes[1], topic, [], { namespace: uuidv4() });
     await Promise.all([alice.readyPromise, bob.readyPromise]);
     let aliceAddCount = 0;
     let bobAddCount = 0;
@@ -82,13 +82,13 @@ describe('IPFS Map', () => {
 
 
   test('Synchronize set and delete events', async () => {
-    const topic = uuid.v4();
-    const keyX = uuid.v4();
-    const keyY = uuid.v4();
+    const topic = uuidv4();
+    const keyX = uuidv4();
+    const keyY = uuidv4();
     const valueX = generateValue();
     const valueY = generateValue();
-    const alice = new IpfsObservedRemoveMap(db, nodes[0], topic, [], { namespace: uuid.v4() });
-    const bob = new IpfsObservedRemoveMap(db, nodes[1], topic, [], { namespace: uuid.v4() });
+    const alice = new IpfsObservedRemoveMap(db, nodes[0], topic, [], { namespace: uuidv4() });
+    const bob = new IpfsObservedRemoveMap(db, nodes[1], topic, [], { namespace: uuidv4() });
     await Promise.all([alice.readyPromise, bob.readyPromise]);
     const aliceSetXPromise = new Promise((resolve) => {
       alice.once('set', (key, value) => {
@@ -131,21 +131,21 @@ describe('IPFS Map', () => {
   });
 
   test('Synchronize mixed maps using sync', async () => {
-    const topic = uuid.v4();
-    const keyA = uuid.v4();
-    const keyB = uuid.v4();
-    const keyC = uuid.v4();
-    const keyX = uuid.v4();
-    const keyY = uuid.v4();
-    const keyZ = uuid.v4();
+    const topic = uuidv4();
+    const keyA = uuidv4();
+    const keyB = uuidv4();
+    const keyC = uuidv4();
+    const keyX = uuidv4();
+    const keyY = uuidv4();
+    const keyZ = uuidv4();
     const valueA = generateValue();
     const valueB = generateValue();
     const valueC = generateValue();
     const valueX = generateValue();
     const valueY = generateValue();
     const valueZ = generateValue();
-    const alice = new IpfsObservedRemoveMap(db, nodes[0], topic, [[keyA, valueA], [keyB, valueB], [keyC, valueC]], { namespace: uuid.v4(), bufferPublishing: 30000 });
-    const bob = new IpfsObservedRemoveMap(db, nodes[1], topic, [[keyX, valueX], [keyY, valueY], [keyZ, valueZ]], { namespace: uuid.v4(), bufferPublishing: 30000 });
+    const alice = new IpfsObservedRemoveMap(db, nodes[0], topic, [[keyA, valueA], [keyB, valueB], [keyC, valueC]], { namespace: uuidv4(), bufferPublishing: 30000 });
+    const bob = new IpfsObservedRemoveMap(db, nodes[1], topic, [[keyX, valueX], [keyY, valueY], [keyZ, valueZ]], { namespace: uuidv4(), bufferPublishing: 30000 });
     await Promise.all([bob.readyPromise, alice.readyPromise]);
     await waitForHashing([alice, bob]);
     await expect(alice.dump()).resolves.toEqual(await bob.dump());

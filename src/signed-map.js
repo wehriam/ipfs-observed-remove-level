@@ -1,18 +1,16 @@
 // @flow
 
-const ObservedRemoveMap = require('observed-remove-level/dist/signed-map');
-const { parser: jsonStreamParser } = require('stream-json/Parser');
-const CID = require('cids');
-const { default: AbortController } = require('abort-controller');
-const { streamArray: jsonStreamArray } = require('stream-json/streamers/StreamArray');
-const { default: PQueue } = require('p-queue');
-const LruCache = require('lru-cache');
-const { debounce } = require('lodash');
-const { Readable } = require('stream');
-const {
-  SerializeTransform,
-  DeserializeTransform,
-} = require('@bunchtogether/chunked-stream-transformers');
+import { SignedObservedRemoveMap } from 'observed-remove-level';
+import { parser as jsonStreamParser } from 'stream-json/Parser';
+import CID from 'cids';
+
+import { streamArray as jsonStreamArray } from 'stream-json/streamers/StreamArray';
+import PQueue from 'p-queue';
+import LruCache from 'lru-cache';
+import debounce from 'lodash/debounce';
+import { Readable } from 'stream';
+
+const { SerializeTransform, DeserializeTransform } = require('@bunchtogether/chunked-stream-transformers');
 
 type Options = {
   maxAge?:number,
@@ -26,7 +24,7 @@ type Options = {
 
 const notSubscribedRegex = /Not subscribed/;
 
-class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-disable-line no-unused-vars
+export default class IpfsSignedObservedRemoveMap<V> extends SignedObservedRemoveMap<V> { // eslint-disable-line no-unused-vars
   /**
    * Create an observed-remove CRDT.
    * @param {Object} [ipfs] Object implementing the [core IPFS API](https://github.com/ipfs/interface-ipfs-core#api), most likely a [js-ipfs](https://github.com/ipfs/js-ipfs) or [ipfs-http-client](https://github.com/ipfs/js-ipfs-http-client) object.
@@ -72,10 +70,13 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
       maxChunkSize: 1024 * 512,
     });
     this.serializeTransform.on('data', async (messageSlice) => {
+      if (!this.active) {
+        return;
+      }
       try {
-        await this.ipfs.pubsub.publish(this.topic, messageSlice.toString('base64'), { signal: this.abortController.signal });
+        await this.ipfs.pubsub.publish(this.topic, messageSlice, { signal: this.abortController.signal });
       } catch (error) {
-        if (error.type !== 'aborted') {
+        if (error.type !== 'aborted' && this.active) {
           this.emit('error', error);
         }
       }
@@ -100,7 +101,7 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
     });
     this.hashLoadQueue = new PQueue({});
     this.hashLoadQueue.on('idle', async () => {
-      if (this.hasNewPeers) {
+      if (this.hasNewPeers && this.active) {
         this.debouncedIpfsSync();
       }
       this.emit('hashesloaded');
@@ -140,7 +141,7 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
       const { id } = await this.ipfs.id({ signal: this.abortController.signal });
       this.ipfsId = id;
     } catch (error) {
-      if (error.type !== 'aborted') {
+      if (error.type !== 'aborted' && this.active) {
         throw error;
       }
       return;
@@ -157,21 +158,20 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
           const message = Buffer.from(JSON.stringify(queue));
           await this.ipfs.pubsub.publish(this.topic, message, { signal: this.abortController.signal });
         } catch (error) {
-          if (error.type !== 'aborted') {
+          if (error.type !== 'aborted' && this.active) {
             this.emit('error', error);
           }
         }
       }
     });
     try {
-      const promises = [this.ipfs.pubsub.subscribe(this.topic, this.boundHandleQueueMessage, { discover: true, signal: this.abortController.signal })];
+      await this.ipfs.pubsub.subscribe(this.topic, this.boundHandleQueueMessage, { discover: true, signal: this.abortController.signal });
       if (!this.disableSync) {
-        promises.push(this.ipfs.pubsub.subscribe(`${this.topic}:hash`, this.boundHandleHashMessage, { discover: true, signal: this.abortController.signal }));
+        await this.ipfs.pubsub.subscribe(`${this.topic}:hash`, this.boundHandleHashMessage, { discover: true, signal: this.abortController.signal });
         this.waitForPeersThenSendHash();
       }
-      await Promise.all(promises);
     } catch (error) {
-      if (error.type !== 'aborted') {
+      if (error.type !== 'aborted' && this.active) {
         throw error;
       }
     }
@@ -186,8 +186,19 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
       if (peerIds.length > 0) {
         this.debouncedIpfsSync();
       } else {
-        await new Promise((resolve) => setTimeout(resolve, 10000));
-        setImmediate(() => {
+        await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            this.abortController.signal.removeEventListener('abort', handleAbort);
+            resolve();
+          }, 10000);
+          const handleAbort = () => {
+            clearTimeout(timeout);
+            this.abortController.signal.removeEventListener('abort', handleAbort);
+            resolve();
+          };
+          this.abortController.signal.addEventListener('abort', handleAbort);
+        });
+        queueMicrotask(() => {
           this.waitForPeersThenSendHash();
         });
       }
@@ -197,7 +208,7 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
         this.emit('error', error);
       }
       if (this.active && error.name === 'TimeoutError') {
-        setImmediate(() => {
+        queueMicrotask(() => {
           this.waitForPeersThenSendHash();
         });
       }
@@ -224,7 +235,7 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
       }
       this.hasNewPeers = false;
     } catch (error) {
-      if (error.type !== 'aborted') {
+      if (error.type !== 'aborted' && this.active) {
         this.emit('error', error);
       }
     }
@@ -267,11 +278,10 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
         const timeout = setTimeout(() => {
           unsubscribeAbortController.abort();
         }, 5000);
-        const promises = [this.ipfs.pubsub.unsubscribe(this.topic, this.boundHandleQueueMessage, { signal: unsubscribeAbortController.signal })];
+        await this.ipfs.pubsub.unsubscribe(this.topic, this.boundHandleQueueMessage, { signal: unsubscribeAbortController.signal });
         if (!this.disableSync) {
-          promises.push(this.ipfs.pubsub.unsubscribe(`${this.topic}:hash`, this.boundHandleHashMessage, { signal: unsubscribeAbortController.signal }));
+          await this.ipfs.pubsub.unsubscribe(`${this.topic}:hash`, this.boundHandleHashMessage, { signal: unsubscribeAbortController.signal });
         }
-        await Promise.all(promises);
         clearTimeout(timeout);
       } catch (error) {
         if (!notSubscribedRegex.test(error.message)) {
@@ -281,6 +291,7 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
         }
       }
     }
+    await this.hashLoadQueue.onIdle();
     this.abortController.abort();
     this.abortController = new AbortController();
     await this.deserializeTransform.onIdle();
@@ -297,7 +308,7 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
       return;
     }
     if (this.chunkPubSub) {
-      this.deserializeTransform.write(Buffer.from(Buffer.from(message.data).toString(), 'base64'));
+      this.deserializeTransform.write(message.data);
     } else {
       try {
         const queue = JSON.parse(Buffer.from(message.data).toString('utf8'));
@@ -323,7 +334,6 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
     if (this.syncCache.has(remoteHash)) {
       return;
     }
-    console.log({ remoteHash });
     this.syncCache.set(remoteHash, true);
     try {
       this.hashLoadQueue.add(() => this.loadIpfsHash(remoteHash));
@@ -391,15 +401,13 @@ class IpfsSignedObservedRemoveMap<V> extends ObservedRemoveMap<V> { // eslint-di
         });
       });
     } catch (error) {
-      if (error.type !== 'aborted') {
+      if (error.type !== 'aborted' && this.active) {
         this.emit('error', error);
       }
       return;
     }
+    stream.destroy();
     this.processSigned([insertions, deletions]);
     await this.signedProcessQueue.onIdle();
   }
 }
-
-
-module.exports = IpfsSignedObservedRemoveMap;

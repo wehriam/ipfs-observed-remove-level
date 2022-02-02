@@ -1,9 +1,9 @@
 // @flow
 
-const { IpfsObservedRemoveMap, IpfsSignedObservedRemoveMap } = require('../../src');
-const { debounce } = require('lodash');
+import { debounce } from 'lodash';
+import { IpfsObservedRemoveMap, IpfsSignedObservedRemoveMap } from '../../src';
 
-module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObservedRemoveMap<any>>) => new Promise((resolve, reject) => {
+export default async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObservedRemoveMap<any>>) => new Promise((resolve, reject) => {
   let didResolve = false;
   const areEqual = async () => {
     if (didResolve) {
@@ -36,6 +36,9 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
     return true;
   };
   const handleTimeout = async () => {
+    if (didResolve) {
+      return;
+    }
     if (!(await areEqual())) {
       timeout = setTimeout(handleTimeout, 100);
       return;
@@ -50,6 +53,9 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
   };
   let timeout = setTimeout(handleTimeout, 100);
   const handleError = (error) => {
+    if (didResolve) {
+      return;
+    }
     clearTimeout(timeout);
     for (const map of maps) {
       map.removeListener('error', handleError);
@@ -60,6 +66,9 @@ module.exports = async (maps: Array<IpfsObservedRemoveMap<any> | IpfsSignedObser
     reject(error);
   };
   const handleHashesLoaded = debounce(async () => {
+    if (didResolve) {
+      return;
+    }
     clearTimeout(timeout);
     if (await areEqual()) {
       for (const map of maps) {

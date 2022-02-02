@@ -1,16 +1,16 @@
 // @flow
 
-const os = require('os');
-const path = require('path');
-const uuid = require('uuid');
-const level = require('level');
-const { getSwarm, closeAllNodes } = require('./lib/ipfs');
-const { getSigner, generateId, IpfsSignedObservedRemoveMap, InvalidSignatureError } = require('../src');
-const { generateValue } = require('./lib/values');
-const expect = require('expect');
-const NodeRSA = require('node-rsa');
-const waitForHashing = require('./lib/wait-for-hashing');
-require('./lib/async-iterator-comparison');
+import os from 'os';
+import expect from 'expect';
+import NodeRSA from 'node-rsa';
+import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import level from 'level';
+import { getSwarm, closeAllNodes } from './lib/ipfs';
+import { getSigner, generateId, IpfsSignedObservedRemoveMap, InvalidSignatureError } from '../src';
+import { generateValue } from './lib/values';
+import waitForHashing from './lib/wait-for-hashing';
+import './lib/async-iterator-comparison';
 
 const privateKey = new NodeRSA({ b: 512 });
 const sign = getSigner(privateKey.exportKey('pkcs1-private-pem'));
@@ -26,7 +26,7 @@ describe('IPFS Signed Map', () => {
 
   beforeAll(async () => {
     nodes = await getSwarm(2);
-    const location = path.join(os.tmpdir(), uuid.v4());
+    const location = path.join(os.tmpdir(), uuidv4());
     db = level(location, { valueEncoding: 'json' });
   });
 
@@ -36,21 +36,21 @@ describe('IPFS Signed Map', () => {
   });
 
   test('Load from a hash', async () => {
-    const topicA = uuid.v4();
-    const topicB = uuid.v4();
-    const keyA = uuid.v4();
-    const keyB = uuid.v4();
-    const keyC = uuid.v4();
+    const topicA = uuidv4();
+    const topicB = uuidv4();
+    const keyA = uuidv4();
+    const keyB = uuidv4();
+    const keyC = uuidv4();
     const idA = generateId();
     const idB = generateId();
     const idC = generateId();
     const valueA = generateValue();
     const valueB = generateValue();
     const valueC = generateValue();
-    const alice = new IpfsSignedObservedRemoveMap(db, nodes[0], topicA, [[keyA, valueA, idA, sign(keyA, valueA, idA)], [keyB, valueB, idB, sign(keyB, valueB, idB)], [keyC, valueC, idC, sign(keyC, valueC, idC)]], { key, namespace: uuid.v4() });
+    const alice = new IpfsSignedObservedRemoveMap(db, nodes[0], topicA, [[keyA, valueA, idA, sign(keyA, valueA, idA)], [keyB, valueB, idB, sign(keyB, valueB, idB)], [keyC, valueC, idC, sign(keyC, valueC, idC)]], { key, namespace: uuidv4() });
     await alice.readyPromise;
     const hash = await alice.getIpfsHash();
-    const bob = new IpfsSignedObservedRemoveMap(db, nodes[0], topicB, [], { key, namespace: uuid.v4() });
+    const bob = new IpfsSignedObservedRemoveMap(db, nodes[0], topicB, [], { key, namespace: uuidv4() });
     await bob.readyPromise;
     await bob.loadIpfsHash(hash);
     await expect(bob.get(keyA)).resolves.toEqual(valueA);
@@ -61,11 +61,11 @@ describe('IPFS Signed Map', () => {
   });
 
   test('Throw on invalid signatures', async () => {
-    const topic = uuid.v4();
-    const keyA = uuid.v4();
+    const topic = uuidv4();
+    const keyA = uuidv4();
     const valueA = generateValue();
-    const map = new IpfsSignedObservedRemoveMap(db, nodes[0], topic, [], { key, namespace: uuid.v4() });
-    const invalidMap = new IpfsSignedObservedRemoveMap(db, nodes[0], uuid.v4(), [[keyA, valueA, generateId(), '***']], { key, namespace: uuid.v4() });
+    const map = new IpfsSignedObservedRemoveMap(db, nodes[0], topic, [], { key, namespace: uuidv4() });
+    const invalidMap = new IpfsSignedObservedRemoveMap(db, nodes[0], uuidv4(), [[keyA, valueA, generateId(), '***']], { key, namespace: uuidv4() });
     await expect(invalidMap.readyPromise).rejects.toThrowError(InvalidSignatureError);
     await expect(map.setSigned(keyA, valueA, generateId(), '***')).rejects.toThrowError(InvalidSignatureError);
     const id = generateId();
@@ -75,19 +75,19 @@ describe('IPFS Signed Map', () => {
   });
 
   test('Emit errors on invalid synchronization', async () => {
-    const topic = uuid.v4();
+    const topic = uuidv4();
     const alicePrivateKey = new NodeRSA({ b: 512 });
     const aliceSign = getSigner(alicePrivateKey.exportKey('pkcs1-private-pem'));
     const aliceKey = alicePrivateKey.exportKey('pkcs1-public-pem');
     const bobPrivateKey = new NodeRSA({ b: 512 });
     const bobSign = getSigner(bobPrivateKey.exportKey('pkcs1-private-pem'));
     const bobKey = bobPrivateKey.exportKey('pkcs1-public-pem');
-    const keyX = uuid.v4();
-    const keyY = uuid.v4();
+    const keyX = uuidv4();
+    const keyY = uuidv4();
     const valueX = generateValue();
     const valueY = generateValue();
-    const alice = new IpfsSignedObservedRemoveMap(db, nodes[0], topic, [], { key: aliceKey, namespace: uuid.v4() });
-    const bob = new IpfsSignedObservedRemoveMap(db, nodes[1], topic, [], { key: bobKey, namespace: uuid.v4() });
+    const alice = new IpfsSignedObservedRemoveMap(db, nodes[0], topic, [], { key: aliceKey, namespace: uuidv4() });
+    const bob = new IpfsSignedObservedRemoveMap(db, nodes[1], topic, [], { key: bobKey, namespace: uuidv4() });
     await Promise.all([alice.readyPromise, bob.readyPromise]);
     await new Promise((resolve) => setTimeout(resolve, 500));
     const id1 = generateId();
@@ -116,15 +116,15 @@ describe('IPFS Signed Map', () => {
   });
 
   test('Synchronize maps', async () => {
-    const topic = uuid.v4();
-    const keyX = uuid.v4();
-    const keyY = uuid.v4();
-    const keyZ = uuid.v4();
+    const topic = uuidv4();
+    const keyX = uuidv4();
+    const keyY = uuidv4();
+    const keyZ = uuidv4();
     const valueX = generateValue();
     const valueY = generateValue();
     const valueZ = generateValue();
-    const alice = new IpfsSignedObservedRemoveMap(db, nodes[0], topic, [], { key, namespace: uuid.v4() });
-    const bob = new IpfsSignedObservedRemoveMap(db, nodes[1], topic, [], { key, namespace: uuid.v4() });
+    const alice = new IpfsSignedObservedRemoveMap(db, nodes[0], topic, [], { key, namespace: uuidv4() });
+    const bob = new IpfsSignedObservedRemoveMap(db, nodes[1], topic, [], { key, namespace: uuidv4() });
     alice.on('error', (error) => console.error(error));
     bob.on('error', (error) => console.error(error));
     await Promise.all([alice.readyPromise, bob.readyPromise]);
@@ -172,15 +172,15 @@ describe('IPFS Signed Map', () => {
   });
 
   test('Synchronize set and delete events', async () => {
-    const topic = uuid.v4();
-    const keyX = uuid.v4();
-    const keyY = uuid.v4();
+    const topic = uuidv4();
+    const keyX = uuidv4();
+    const keyY = uuidv4();
     const valueX = generateValue();
     const valueY = generateValue();
     const idX = generateId();
     const idY = generateId();
-    const alice = new IpfsSignedObservedRemoveMap(db, nodes[0], topic, [], { key, namespace: uuid.v4() });
-    const bob = new IpfsSignedObservedRemoveMap(db, nodes[1], topic, [], { key, namespace: uuid.v4() });
+    const alice = new IpfsSignedObservedRemoveMap(db, nodes[0], topic, [], { key, namespace: uuidv4() });
+    const bob = new IpfsSignedObservedRemoveMap(db, nodes[1], topic, [], { key, namespace: uuidv4() });
     await Promise.all([alice.readyPromise, bob.readyPromise]);
     const aliceSetXPromise = new Promise((resolve) => {
       alice.on('set', (k, v) => {
@@ -227,13 +227,13 @@ describe('IPFS Signed Map', () => {
 
 
   test('Synchronize mixed maps using sync', async () => {
-    const topic = uuid.v4();
-    const keyA = uuid.v4();
-    const keyB = uuid.v4();
-    const keyC = uuid.v4();
-    const keyX = uuid.v4();
-    const keyY = uuid.v4();
-    const keyZ = uuid.v4();
+    const topic = uuidv4();
+    const keyA = uuidv4();
+    const keyB = uuidv4();
+    const keyC = uuidv4();
+    const keyX = uuidv4();
+    const keyY = uuidv4();
+    const keyZ = uuidv4();
     const valueA = generateValue();
     const valueB = generateValue();
     const valueC = generateValue();
@@ -246,8 +246,8 @@ describe('IPFS Signed Map', () => {
     const idX = generateId();
     const idY = generateId();
     const idZ = generateId();
-    const alice = new IpfsSignedObservedRemoveMap(db, nodes[0], topic, [[keyA, valueA, idA, sign(keyA, valueA, idA)], [keyB, valueB, idB, sign(keyB, valueB, idB)], [keyC, valueC, idC, sign(keyC, valueC, idC)]], { key, namespace: uuid.v4() });
-    const bob = new IpfsSignedObservedRemoveMap(db, nodes[1], topic, [[keyX, valueX, idX, sign(keyX, valueX, idX)], [keyY, valueY, idY, sign(keyY, valueY, idY)], [keyZ, valueZ, idZ, sign(keyZ, valueZ, idZ)]], { key, namespace: uuid.v4() });
+    const alice = new IpfsSignedObservedRemoveMap(db, nodes[0], topic, [[keyA, valueA, idA, sign(keyA, valueA, idA)], [keyB, valueB, idB, sign(keyB, valueB, idB)], [keyC, valueC, idC, sign(keyC, valueC, idC)]], { key, namespace: uuidv4() });
+    const bob = new IpfsSignedObservedRemoveMap(db, nodes[1], topic, [[keyX, valueX, idX, sign(keyX, valueX, idX)], [keyY, valueY, idY, sign(keyY, valueY, idY)], [keyZ, valueZ, idZ, sign(keyZ, valueZ, idZ)]], { key, namespace: uuidv4() });
     await Promise.all([bob.readyPromise, alice.readyPromise]);
     await waitForHashing([alice, bob]);
     await expect(alice.dump()).resolves.toEqual(await bob.dump());

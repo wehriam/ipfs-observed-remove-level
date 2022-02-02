@@ -1,7 +1,7 @@
 // @flow
 
-const { Readable } = require('stream');
-const { hash32 } = require('farmhash');
+import { Readable } from 'stream';
+import { hash32 } from 'farmhash';
 
 const OPEN_BUFFER = Buffer.from('["');
 const MID_BUFFER = Buffer.from('",');
@@ -10,7 +10,7 @@ const COMMA_BUFFER = Buffer.from(',');
 
 type LevelDBIterator = {next: ((Error | void, Buffer | void, Buffer | void) => void) => void, end: ((Error | void) => void) => void};
 
-class ReadableJsonDump extends Readable {
+export default class ReadableJsonDump extends Readable {
   constructor(db:Object, namespace: string, options?:Object) {
     super(options);
     this.push(Buffer.from('[['));
@@ -168,4 +168,3 @@ class ReadableJsonDump extends Readable {
   }
 }
 
-module.exports = ReadableJsonDump;

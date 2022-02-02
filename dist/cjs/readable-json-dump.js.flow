@@ -1,17 +1,17 @@
-//      
+// @flow
 
-const { Readable } = require('stream');
-const { hash32 } = require('farmhash');
+import { Readable } from 'stream';
+import { hash32 } from 'farmhash';
 
 const OPEN_BUFFER = Buffer.from('["');
 const MID_BUFFER = Buffer.from('",');
 const CLOSE_BUFFER = Buffer.from(']');
 const COMMA_BUFFER = Buffer.from(',');
 
-                                                                                                                                     
+type LevelDBIterator = {next: ((Error | void, Buffer | void, Buffer | void) => void) => void, end: ((Error | void) => void) => void};
 
-class ReadableJsonDump extends Readable {
-  constructor(db       , namespace        , options        ) {
+export default class ReadableJsonDump extends Readable {
+  constructor(db:Object, namespace: string, options?:Object) {
     super(options);
     this.push(Buffer.from('[['));
     this.insertionIterator = db.iterator({
@@ -36,20 +36,20 @@ class ReadableJsonDump extends Readable {
     this.bucket = (options && options.bucket) || 0;
   }
 
-                                  
-                                             
-                                            
-                                 
-                                     
-                                      
-                                     
-                             
-                          
-                         
+  declare namespaceLength: number;
+  declare insertionIterator: LevelDBIterator;
+  declare deletionIterator: LevelDBIterator;
+  declare didWritePairs: boolean;
+  declare didWriteDeletions: boolean;
+  declare skipInsertionComma: boolean;
+  declare skipDeletionComma: boolean;
+  declare isReading: boolean;
+  declare buckets: number;
+  declare bucket: number;
 
-  getInsertionPair()                                         {
+  getInsertionPair():Promise<[Buffer | void, Buffer | void]> {
     return new Promise((resolve) => {
-      this.insertionIterator.next((error             , k               , v               ) => {
+      this.insertionIterator.next((error:Error | void, k: Buffer | void, v: Buffer | void) => {
         if (error) {
           this.didWritePairs = true;
           this.didWriteDeletions = true;
@@ -62,9 +62,9 @@ class ReadableJsonDump extends Readable {
     });
   }
 
-  getDeletionPair()                                         {
+  getDeletionPair():Promise<[Buffer | void, Buffer | void]> {
     return new Promise((resolve) => {
-      this.deletionIterator.next((error             , k               , v               ) => {
+      this.deletionIterator.next((error:Error | void, k: Buffer | void, v: Buffer | void) => {
         if (error) {
           this.didWritePairs = true;
           this.didWriteDeletions = true;
@@ -111,7 +111,7 @@ class ReadableJsonDump extends Readable {
       this.push(Buffer.from('],['));
       this.didWritePairs = true;
       await new Promise((resolve, reject) => {
-        this.insertionIterator.end((error             ) => {
+        this.insertionIterator.end((error:Error | void) => {
           if (error) {
             reject(error);
           } else {
@@ -149,7 +149,7 @@ class ReadableJsonDump extends Readable {
       }
       this.didWriteDeletions = true;
       await new Promise((resolve, reject) => {
-        this.deletionIterator.end((error             ) => {
+        this.deletionIterator.end((error:Error | void) => {
           if (error) {
             reject(error);
           } else {
@@ -168,4 +168,3 @@ class ReadableJsonDump extends Readable {
   }
 }
 
-module.exports = ReadableJsonDump;

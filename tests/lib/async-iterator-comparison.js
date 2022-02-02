@@ -1,18 +1,19 @@
 // @flow
 
-const expect = require('expect');
-const {
+import expect from 'expect';
+import {
   MatcherHintOptions,
   matcherHint,
   printDiffOrStringify,
   printExpected,
   printReceived,
   stringify,
-} = require('jest-matcher-utils');
-const { equals } = require('expect/build/jasmineUtils');
-const {
+} from 'jest-matcher-utils';
+import { equals } from 'expect/build/jasmineUtils';
+import {
   iterableEquality,
-} = require('expect/build//utils');
+} from 'expect/build/utils';
+
 // The optional property of matcher context is true if undefined.
 const isExpand = (expand?: boolean): boolean => expand !== false;
 
