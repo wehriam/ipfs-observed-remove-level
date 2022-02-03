@@ -14,3 +14,5 @@ flow/
 [options]
 
 traces=5
+module.name_mapper='observed-remove-level/map' -> '<PROJECT_ROOT>/node_modules/observed-remove-level/dist/cjs/map.js'
+module.name_mapper='observed-remove-level/signed-map' -> '<PROJECT_ROOT>/node_modules/observed-remove-level/dist/cjs/signed-map.js'

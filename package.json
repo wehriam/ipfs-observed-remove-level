@@ -1,7 +1,6 @@
 {
   "name": "ipfs-observed-remove-level",
-  "version": "2.3.01",
-  "main": "dist/index.js",
+  "version": "2.3.03",
   "repository": "git@github.com:wehriam/ipfs-observed-remove-level",
   "author": "John Wehr <johnwehr@gmail.com>",
   "license": "MIT",
@@ -19,6 +18,23 @@
     "documentation": "documentation readme src/map.js --section='Map API' --babel=./babel.config.js && documentation readme src/signed-map.js --section='Signed Map API' --babel=./babel.config.js",
     "prepare": "husky install"
   },
+  "main": "dist/cjs/index.js",
+  "module": "dist/esm/index.js",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "require": "./dist/cjs/index.js",
+      "import": "./dist/esm/index.js"
+    },
+    "./map": {
+      "require": "./dist/cjs/map.js",
+      "import": "./dist/esm/map.js"
+    },
+    "./signed-map": {
+      "require": "./dist/cjs/signed-map.js",
+      "import": "./dist/esm/signed-map.js"
+    }
+  },
   "go-ipfs": {
     "version": "v0.11.0"
   },
@@ -31,12 +47,16 @@
     "transformIgnorePatterns": [
       "node_modules/(?!(p-queue))/"
     ],
+    "moduleNameMapper": {
+      "observed-remove-level/map": "<rootDir>/node_modules/observed-remove-level/dist/cjs/map.js",
+      "observed-remove-level/signed-map": "<rootDir>/node_modules/observed-remove-level/dist/cjs/signed-map.js"
+    },
     "testEnvironment": "node"
   },
   "devDependencies": {
-    "@babel/cli": "^7.16.8",
-    "@babel/core": "^7.16.12",
-    "@babel/eslint-parser": "^7.16.5",
+    "@babel/cli": "^7.17.0",
+    "@babel/core": "^7.17.0",
+    "@babel/eslint-parser": "^7.17.0",
     "@babel/plugin-proposal-class-properties": "^7.16.7",
     "@babel/plugin-transform-flow-strip-types": "^7.16.7",
     "@babel/plugin-transform-modules-commonjs": "^7.16.8",
@@ -57,7 +77,7 @@
     "expect": "^27.4.6",
     "flow-bin": "^0.130.0",
     "flow-copy-source": "^2.0.9",
-    "flow-remove-types": "^2.170.0",
+    "flow-remove-types": "^2.171.0",
     "flow-typed": "^3.6.1",
     "go-ipfs": "https://github.com/ipfs/npm-go-ipfs.git#8b0e3d947f0af11a8704760f1f78d7b8a02324aa",
     "husky": "^7.0.4",
@@ -75,7 +95,7 @@
     "ipfs-http-client": "^56.0.0",
     "lodash": "^4.17.21",
     "lru-cache": "^6.0.0",
-    "observed-remove-level": "2.3.0",
+    "observed-remove-level": "2.3.1",
     "p-queue": "^7.2.0",
     "stream-json": "^1.7.3"
   }

@@ -5,7 +5,7 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.default = void 0;
 
-var _observedRemoveLevel = require("observed-remove-level");
+var _map = _interopRequireDefault(require("observed-remove-level/map"));
 
 var _Parser = require("stream-json/Parser");
 
@@ -35,7 +35,7 @@ const MID_BUFFER = Buffer.from('",');
 const CLOSE_BUFFER = Buffer.from(']');
 const COMMA_BUFFER = Buffer.from(',');
 
-class IpfsObservedRemoveMap extends _observedRemoveLevel.ObservedRemoveMap {
+class IpfsObservedRemoveMap extends _map.default {
   // eslint-disable-line no-unused-vars
 
   /**

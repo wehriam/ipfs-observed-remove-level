@@ -1,6 +1,6 @@
 // @flow
 
-import { ObservedRemoveMap } from 'observed-remove-level';
+import ObservedRemoveMap from 'observed-remove-level/map';
 import { parser as jsonStreamParser } from 'stream-json/Parser';
 import CID from 'cids';
 import { streamArray as jsonStreamArray } from 'stream-json/streamers/StreamArray';

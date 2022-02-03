@@ -1,6 +1,6 @@
 // @flow
 
-import { SignedObservedRemoveMap } from 'observed-remove-level';
+import SignedObservedRemoveMap from 'observed-remove-level/signed-map';
 import { parser as jsonStreamParser } from 'stream-json/Parser';
 import CID from 'cids';
 
