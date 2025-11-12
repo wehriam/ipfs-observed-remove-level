@@ -1,6 +1,6 @@
 {
   "name": "ipfs-observed-remove-level",
-  "version": "2.3.04",
+  "version": "2.3.05",
   "repository": "git@github.com:wehriam/ipfs-observed-remove-level",
   "author": "John Wehr <johnwehr@gmail.com>",
   "license": "MIT",

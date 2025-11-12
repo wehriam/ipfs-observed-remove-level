@@ -238,10 +238,15 @@ class IpfsObservedRemoveMap extends _map.default {
 
   async waitForPeers() {
     while (true) {
+      const {
+        controller,
+        cleanup
+      } = this.createLinkedAbortController();
+
       try {
         const peerIds = await this.ipfs.pubsub.peers(this.topic, {
           timeout: 10000,
-          signal: this.abortController.signal
+          signal: controller.signal
         });
 
         if (this.abortController.signal.aborted) {
@@ -257,14 +262,21 @@ class IpfsObservedRemoveMap extends _map.default {
         }
 
         throw error;
+      } finally {
+        cleanup();
       }
     }
 
     while (true) {
+      const {
+        controller,
+        cleanup
+      } = this.createLinkedAbortController();
+
       try {
         const peerIds = await this.ipfs.pubsub.peers(`${this.topic}:hash`, {
           timeout: 10000,
-          signal: this.abortController.signal
+          signal: controller.signal
         });
 
         if (this.abortController.signal.aborted) {
@@ -280,6 +292,8 @@ class IpfsObservedRemoveMap extends _map.default {
         }
 
         throw error;
+      } finally {
+        cleanup();
       }
     }
   }
@@ -289,10 +303,15 @@ class IpfsObservedRemoveMap extends _map.default {
       return;
     }
 
+    const {
+      controller,
+      cleanup
+    } = this.createLinkedAbortController();
+
     try {
       const peerIds = await this.ipfs.pubsub.peers(this.topic, {
         timeout: 10000,
-        signal: this.abortController.signal
+        signal: controller.signal
       });
 
       if (this.abortController.signal.aborted) {
@@ -331,6 +350,8 @@ class IpfsObservedRemoveMap extends _map.default {
           this.waitForPeersThenSendHash();
         });
       }
+    } finally {
+      cleanup();
     }
   }
   /**
@@ -389,14 +410,23 @@ class IpfsObservedRemoveMap extends _map.default {
     }
 
     const stream = new _readableJsonDump.default(this.db.db.db, this.namespace);
-    const file = await this.ipfs.add(stream, {
-      wrapWithDirectory: false,
-      recursive: false,
-      pin: false,
-      signal: this.abortController.signal
-    });
-    this.ipfsHash = file.cid.toString();
-    return this.ipfsHash;
+    const {
+      controller,
+      cleanup
+    } = this.createLinkedAbortController();
+
+    try {
+      const file = await this.ipfs.add(stream, {
+        wrapWithDirectory: false,
+        recursive: false,
+        pin: false,
+        signal: controller.signal
+      });
+      this.ipfsHash = file.cid.toString();
+      return this.ipfsHash;
+    } finally {
+      cleanup();
+    }
   }
   /**
    * Stores and returns an IPFS hash of the current insertions and deletions
@@ -447,6 +477,7 @@ class IpfsObservedRemoveMap extends _map.default {
       signal: this.abortController.signal
     })];
     const addPromises = [];
+    const cleanupFunctions = [];
 
     for (const stream of streams) {
       stream.push(Buffer.from('[['));
@@ -464,11 +495,16 @@ class IpfsObservedRemoveMap extends _map.default {
 
       if (!isAdded[streamId]) {
         isAdded[streamId] = true;
+        const {
+          controller,
+          cleanup
+        } = this.createLinkedAbortController();
+        cleanupFunctions.push(cleanup);
         addPromises.push(this.ipfs.add(stream, {
           wrapWithDirectory: false,
           recursive: false,
           pin: false,
-          signal: this.abortController.signal
+          signal: controller.signal
         }));
       }
 
@@ -501,11 +537,16 @@ class IpfsObservedRemoveMap extends _map.default {
 
       if (!isAdded[streamId]) {
         isAdded[streamId] = true;
+        const {
+          controller,
+          cleanup
+        } = this.createLinkedAbortController();
+        cleanupFunctions.push(cleanup);
         addPromises.push(this.ipfs.add(stream, {
           wrapWithDirectory: false,
           recursive: false,
           pin: false,
-          signal: this.abortController.signal
+          signal: controller.signal
         }));
       }
 
@@ -530,11 +571,17 @@ class IpfsObservedRemoveMap extends _map.default {
       stream.push(null);
     }
 
-    const hashes = (await Promise.all(addPromises)).map(({
-      cid
-    }) => cid.toString());
-    this.ipfsHashes = hashes;
-    return hashes;
+    try {
+      const hashes = (await Promise.all(addPromises)).map(({
+        cid
+      }) => cid.toString());
+      this.ipfsHashes = hashes;
+      return hashes;
+    } finally {
+      for (const cleanup of cleanupFunctions) {
+        cleanup();
+      }
+    }
   } //  /**
   //   * Stores and returns an IPFS hash of the current insertions and deletions
   //   * @return {Promise<string>}
@@ -566,10 +613,19 @@ class IpfsObservedRemoveMap extends _map.default {
 
 
   async ipfsPeerCount() {
-    const peerIds = await this.ipfs.pubsub.peers(this.topic, {
-      signal: this.abortController.signal
-    });
-    return peerIds.length;
+    const {
+      controller,
+      cleanup
+    } = this.createLinkedAbortController();
+
+    try {
+      const peerIds = await this.ipfs.pubsub.peers(this.topic, {
+        signal: controller.signal
+      });
+      return peerIds.length;
+    } finally {
+      cleanup();
+    }
   }
   /**
    * Gracefully shutdown

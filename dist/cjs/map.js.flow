@@ -219,8 +219,9 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
 
   async waitForPeers():Promise<void> {
     while (true) {
+      const { controller, cleanup } = this.createLinkedAbortController();
       try {
-        const peerIds = await this.ipfs.pubsub.peers(this.topic, { timeout: 10000, signal: this.abortController.signal });
+        const peerIds = await this.ipfs.pubsub.peers(this.topic, { timeout: 10000, signal: controller.signal });
         if (this.abortController.signal.aborted) {
           return;
         }
@@ -232,11 +233,14 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
           continue;
         }
         throw error;
+      } finally {
+        cleanup();
       }
     }
     while (true) {
+      const { controller, cleanup } = this.createLinkedAbortController();
       try {
-        const peerIds = await this.ipfs.pubsub.peers(`${this.topic}:hash`, { timeout: 10000, signal: this.abortController.signal });
+        const peerIds = await this.ipfs.pubsub.peers(`${this.topic}:hash`, { timeout: 10000, signal: controller.signal });
         if (this.abortController.signal.aborted) {
           return;
         }
@@ -248,6 +252,8 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
           continue;
         }
         throw error;
+      } finally {
+        cleanup();
       }
     }
   }
@@ -256,8 +262,9 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
     if (!this.active) {
       return;
     }
+    const { controller, cleanup } = this.createLinkedAbortController();
     try {
-      const peerIds = await this.ipfs.pubsub.peers(this.topic, { timeout: 10000, signal: this.abortController.signal });
+      const peerIds = await this.ipfs.pubsub.peers(this.topic, { timeout: 10000, signal: controller.signal });
       if (this.abortController.signal.aborted) {
         return;
       }
@@ -290,6 +297,8 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
           this.waitForPeersThenSendHash();
         });
       }
+    } finally {
+      cleanup();
     }
   }
 
@@ -335,9 +344,14 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
       return this.ipfsHash;
     }
     const stream = new ReadableJsonDump(this.db.db.db, this.namespace);
-    const file = await this.ipfs.add(stream, { wrapWithDirectory: false, recursive: false, pin: false, signal: this.abortController.signal });
-    this.ipfsHash = file.cid.toString();
-    return this.ipfsHash;
+    const { controller, cleanup } = this.createLinkedAbortController();
+    try {
+      const file = await this.ipfs.add(stream, { wrapWithDirectory: false, recursive: false, pin: false, signal: controller.signal });
+      this.ipfsHash = file.cid.toString();
+      return this.ipfsHash;
+    } finally {
+      cleanup();
+    }
   }
 
   /**
@@ -390,6 +404,7 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
       new Readable({ read() {}, signal: this.abortController.signal }),
     ];
     const addPromises = [];
+    const cleanupFunctions = [];
     for (const stream of streams) {
       stream.push(Buffer.from('[['));
     }
@@ -399,7 +414,9 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
       const stream = streams[streamId];
       if (!isAdded[streamId]) {
         isAdded[streamId] = true;
-        addPromises.push(this.ipfs.add(stream, { wrapWithDirectory: false, recursive: false, pin: false, signal: this.abortController.signal }));
+        const { controller, cleanup } = this.createLinkedAbortController();
+        cleanupFunctions.push(cleanup);
+        addPromises.push(this.ipfs.add(stream, { wrapWithDirectory: false, recursive: false, pin: false, signal: controller.signal }));
       }
       if (isFirstInsertion[streamId]) {
         isFirstInsertion[streamId] = false;
@@ -421,7 +438,9 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
       const stream = streams[streamId];
       if (!isAdded[streamId]) {
         isAdded[streamId] = true;
-        addPromises.push(this.ipfs.add(stream, { wrapWithDirectory: false, recursive: false, pin: false, signal: this.abortController.signal }));
+        const { controller, cleanup } = this.createLinkedAbortController();
+        cleanupFunctions.push(cleanup);
+        addPromises.push(this.ipfs.add(stream, { wrapWithDirectory: false, recursive: false, pin: false, signal: controller.signal }));
       }
       if (isFirstDeletion[streamId]) {
         isFirstDeletion[streamId] = false;
@@ -440,9 +459,15 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
     for (const stream of streams) {
       stream.push(null);
     }
-    const hashes = (await Promise.all(addPromises)).map(({ cid }) => cid.toString());
-    this.ipfsHashes = hashes;
-    return hashes;
+    try {
+      const hashes = (await Promise.all(addPromises)).map(({ cid }) => cid.toString());
+      this.ipfsHashes = hashes;
+      return hashes;
+    } finally {
+      for (const cleanup of cleanupFunctions) {
+        cleanup();
+      }
+    }
   }
 
 
@@ -475,8 +500,13 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
    * @return {number}
    */
   async ipfsPeerCount():Promise<number> {
-    const peerIds = await this.ipfs.pubsub.peers(this.topic, { signal: this.abortController.signal });
-    return peerIds.length;
+    const { controller, cleanup } = this.createLinkedAbortController();
+    try {
+      const peerIds = await this.ipfs.pubsub.peers(this.topic, { signal: controller.signal });
+      return peerIds.length;
+    } finally {
+      cleanup();
+    }
   }
 
   /**
