@@ -83,12 +83,15 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
       if (!this.active) {
         return;
       }
+      const { controller, cleanup } = this.createLinkedAbortController();
       try {
-        await this.ipfs.pubsub.publish(this.topic, messageSlice, { signal: this.abortController.signal });
+        await this.ipfs.pubsub.publish(this.topic, messageSlice, { signal: controller.signal });
       } catch (error) {
         if (error.type !== 'aborted') {
           this.emit('error', error);
         }
+      } finally {
+        cleanup();
       }
     });
     this.serializeTransform.on('error', (error) => {
@@ -147,6 +150,29 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
   declare deserializeTransform: DeserializeTransform;
   declare hashLoadQueue: PQueue;
 
+  /**
+   * Create a per-operation abort controller linked to the main abort controller.
+   * This prevents listener accumulation in any-signal when combining signals.
+   * @private
+   * @returns {{controller: AbortController, cleanup: Function}}
+   */
+  createLinkedAbortController(): { controller: AbortController, cleanup: () => void } {
+    const controller = new AbortController();
+    let cleanup = () => {};
+
+    if (this.abortController.signal.aborted) {
+      controller.abort();
+    } else {
+      const handler = () => controller.abort();
+      this.abortController.signal.addEventListener('abort', handler);
+      cleanup = () => {
+        this.abortController.signal.removeEventListener('abort', handler);
+      };
+    }
+
+    return { controller, cleanup };
+  }
+
   async initIpfs() {
     try {
       const { id } = await this.ipfs.id({ signal: this.abortController.signal });
@@ -165,13 +191,16 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
         const message = Buffer.from(JSON.stringify(queue));
         this.serializeTransform.write(message);
       } else {
+        const { controller, cleanup } = this.createLinkedAbortController();
         try {
           const message = Buffer.from(JSON.stringify(queue));
-          await this.ipfs.pubsub.publish(this.topic, message, { signal: this.abortController.signal });
+          await this.ipfs.pubsub.publish(this.topic, message, { signal: controller.signal });
         } catch (error) {
           if (error.type !== 'aborted') {
             this.emit('error', error);
           }
+        } finally {
+          cleanup();
         }
       }
     });
@@ -280,8 +309,13 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
         }
         if (!this.syncCache.has(hash) || this.hasNewPeers) {
           this.syncCache.set(hash, true);
-          await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), { signal: this.abortController.signal });
-          this.emit('hash', hash);
+          const { controller, cleanup } = this.createLinkedAbortController();
+          try {
+            await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), { signal: controller.signal });
+            this.emit('hash', hash);
+          } finally {
+            cleanup();
+          }
         }
       }
       this.hasNewPeers = false;

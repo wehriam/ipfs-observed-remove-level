@@ -70,14 +70,21 @@ export default class IpfsObservedRemoveMap extends ObservedRemoveMap {
         return;
       }
 
+      const {
+        controller,
+        cleanup
+      } = this.createLinkedAbortController();
+
       try {
         await this.ipfs.pubsub.publish(this.topic, messageSlice, {
-          signal: this.abortController.signal
+          signal: controller.signal
         });
       } catch (error) {
         if (error.type !== 'aborted') {
           this.emit('error', error);
         }
+      } finally {
+        cleanup();
       }
     });
     this.serializeTransform.on('error', error => {
@@ -116,6 +123,35 @@ export default class IpfsObservedRemoveMap extends ObservedRemoveMap {
    */
 
 
+  /**
+   * Create a per-operation abort controller linked to the main abort controller.
+   * This prevents listener accumulation in any-signal when combining signals.
+   * @private
+   * @returns {{controller: AbortController, cleanup: Function}}
+   */
+  createLinkedAbortController() {
+    const controller = new AbortController();
+
+    let cleanup = () => {};
+
+    if (this.abortController.signal.aborted) {
+      controller.abort();
+    } else {
+      const handler = () => controller.abort();
+
+      this.abortController.signal.addEventListener('abort', handler);
+
+      cleanup = () => {
+        this.abortController.signal.removeEventListener('abort', handler);
+      };
+    }
+
+    return {
+      controller,
+      cleanup
+    };
+  }
+
   async initIpfs() {
     try {
       const {
@@ -141,15 +177,22 @@ export default class IpfsObservedRemoveMap extends ObservedRemoveMap {
         const message = Buffer.from(JSON.stringify(queue));
         this.serializeTransform.write(message);
       } else {
+        const {
+          controller,
+          cleanup
+        } = this.createLinkedAbortController();
+
         try {
           const message = Buffer.from(JSON.stringify(queue));
           await this.ipfs.pubsub.publish(this.topic, message, {
-            signal: this.abortController.signal
+            signal: controller.signal
           });
         } catch (error) {
           if (error.type !== 'aborted') {
             this.emit('error', error);
           }
+        } finally {
+          cleanup();
         }
       }
     });
@@ -290,10 +333,19 @@ export default class IpfsObservedRemoveMap extends ObservedRemoveMap {
 
         if (!this.syncCache.has(hash) || this.hasNewPeers) {
           this.syncCache.set(hash, true);
-          await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), {
-            signal: this.abortController.signal
-          });
-          this.emit('hash', hash);
+          const {
+            controller,
+            cleanup
+          } = this.createLinkedAbortController();
+
+          try {
+            await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), {
+              signal: controller.signal
+            });
+            this.emit('hash', hash);
+          } finally {
+            cleanup();
+          }
         }
       }
 
