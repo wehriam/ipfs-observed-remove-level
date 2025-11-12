@@ -84,14 +84,21 @@ class IpfsSignedObservedRemoveMap extends _signedMap.default {
         return;
       }
 
+      const {
+        controller,
+        cleanup
+      } = this.createLinkedAbortController();
+
       try {
         await this.ipfs.pubsub.publish(this.topic, messageSlice, {
-          signal: this.abortController.signal
+          signal: controller.signal
         });
       } catch (error) {
         if (error.type !== 'aborted' && this.active) {
           this.emit('error', error);
         }
+      } finally {
+        cleanup();
       }
     });
     this.serializeTransform.on('error', error => {
@@ -130,6 +137,35 @@ class IpfsSignedObservedRemoveMap extends _signedMap.default {
    */
 
 
+  /**
+   * Create a per-operation abort controller linked to the main abort controller.
+   * This prevents listener accumulation in any-signal when combining signals.
+   * @private
+   * @returns {{controller: AbortController, cleanup: Function}}
+   */
+  createLinkedAbortController() {
+    const controller = new AbortController();
+
+    let cleanup = () => {};
+
+    if (this.abortController.signal.aborted) {
+      controller.abort();
+    } else {
+      const handler = () => controller.abort();
+
+      this.abortController.signal.addEventListener('abort', handler);
+
+      cleanup = () => {
+        this.abortController.signal.removeEventListener('abort', handler);
+      };
+    }
+
+    return {
+      controller,
+      cleanup
+    };
+  }
+
   async initIpfs() {
     try {
       const {
@@ -155,15 +191,22 @@ class IpfsSignedObservedRemoveMap extends _signedMap.default {
         const message = Buffer.from(JSON.stringify(queue));
         this.serializeTransform.write(message);
       } else {
+        const {
+          controller,
+          cleanup
+        } = this.createLinkedAbortController();
+
         try {
           const message = Buffer.from(JSON.stringify(queue));
           await this.ipfs.pubsub.publish(this.topic, message, {
-            signal: this.abortController.signal
+            signal: controller.signal
           });
         } catch (error) {
           if (error.type !== 'aborted' && this.active) {
             this.emit('error', error);
           }
+        } finally {
+          cleanup();
         }
       }
     });
@@ -193,29 +236,21 @@ class IpfsSignedObservedRemoveMap extends _signedMap.default {
       return;
     }
 
+    const {
+      controller,
+      cleanup
+    } = this.createLinkedAbortController();
+
     try {
       const peerIds = await this.ipfs.pubsub.peers(this.topic, {
         timeout: 10000,
-        signal: this.abortController.signal
+        signal: controller.signal
       });
 
       if (peerIds.length > 0) {
         this.debouncedIpfsSync();
       } else {
-        await new Promise(resolve => {
-          const timeout = setTimeout(() => {
-            this.abortController.signal.removeEventListener('abort', handleAbort);
-            resolve();
-          }, 10000);
-
-          const handleAbort = () => {
-            clearTimeout(timeout);
-            this.abortController.signal.removeEventListener('abort', handleAbort);
-            resolve();
-          };
-
-          this.abortController.signal.addEventListener('abort', handleAbort);
-        });
+        await new Promise(resolve => setTimeout(resolve, 10000));
         queueMicrotask(() => {
           this.waitForPeersThenSendHash();
         });
@@ -231,6 +266,8 @@ class IpfsSignedObservedRemoveMap extends _signedMap.default {
           this.waitForPeersThenSendHash();
         });
       }
+    } finally {
+      cleanup();
     }
   }
   /**
@@ -253,10 +290,19 @@ class IpfsSignedObservedRemoveMap extends _signedMap.default {
 
       if (!this.syncCache.has(hash, true) || this.hasNewPeers) {
         this.syncCache.set(hash, true);
-        await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), {
-          signal: this.abortController.signal
-        });
-        this.emit('hash', hash);
+        const {
+          controller,
+          cleanup
+        } = this.createLinkedAbortController();
+
+        try {
+          await this.ipfs.pubsub.publish(`${this.topic}:hash`, Buffer.from(hash, 'utf8'), {
+            signal: controller.signal
+          });
+          this.emit('hash', hash);
+        } finally {
+          cleanup();
+        }
       }
 
       this.hasNewPeers = false;
@@ -278,14 +324,23 @@ class IpfsSignedObservedRemoveMap extends _signedMap.default {
     }
 
     const data = await this.dump();
-    const file = await this.ipfs.add(Buffer.from(JSON.stringify(data)), {
-      wrapWithDirectory: false,
-      recursive: false,
-      pin: false,
-      signal: this.abortController.signal
-    });
-    this.ipfsHash = file.cid.toString();
-    return this.ipfsHash;
+    const {
+      controller,
+      cleanup
+    } = this.createLinkedAbortController();
+
+    try {
+      const file = await this.ipfs.add(Buffer.from(JSON.stringify(data)), {
+        wrapWithDirectory: false,
+        recursive: false,
+        pin: false,
+        signal: controller.signal
+      });
+      this.ipfsHash = file.cid.toString();
+      return this.ipfsHash;
+    } finally {
+      cleanup();
+    }
   }
   /**
    * Current number of IPFS pubsub peers.
@@ -294,10 +349,19 @@ class IpfsSignedObservedRemoveMap extends _signedMap.default {
 
 
   async ipfsPeerCount() {
-    const peerIds = await this.ipfs.pubsub.peers(this.topic, {
-      signal: this.abortController.signal
-    });
-    return peerIds.length;
+    const {
+      controller,
+      cleanup
+    } = this.createLinkedAbortController();
+
+    try {
+      const peerIds = await this.ipfs.pubsub.peers(this.topic, {
+        signal: controller.signal
+      });
+      return peerIds.length;
+    } finally {
+      cleanup();
+    }
   }
   /**
    * Gracefully shutdown
@@ -394,90 +458,100 @@ class IpfsSignedObservedRemoveMap extends _signedMap.default {
   }
 
   async loadIpfsHash(hash) {
-    // $FlowFixMe
-    const stream = _stream.Readable.from(this.ipfs.cat(new _cids.default(hash), {
-      timeout: 30000,
-      signal: this.abortController.signal
-    }));
-
-    const parser = (0, _Parser.parser)();
-    const streamArray = (0, _StreamArray.streamArray)();
-    const pipeline = stream.pipe(parser);
-    let arrayDepth = 0;
-    let streamState = 0;
-    let insertions = [];
-    let deletions = [];
-    streamArray.on('data', ({
-      value
-    }) => {
-      if (streamState === 1) {
-        insertions.push(value);
-      } else if (streamState === 3) {
-        deletions.push(value);
-      }
-
-      if (insertions.length + deletions.length < 1000) {
-        return;
-      }
-
-      const i = insertions;
-      const d = deletions;
-      insertions = [];
-      deletions = [];
-      this.processSigned([i, d], true);
-    });
+    const {
+      controller,
+      cleanup
+    } = this.createLinkedAbortController();
 
     try {
-      await new Promise((resolve, reject) => {
-        stream.on('error', error => {
-          reject(error);
-        });
-        streamArray.on('error', error => {
-          reject(error);
-        });
-        pipeline.on('error', error => {
-          reject(error);
-        });
-        pipeline.on('end', () => {
-          resolve();
-        });
-        pipeline.on('data', data => {
-          const {
-            name
-          } = data;
+      // $FlowFixMe
+      const stream = _stream.Readable.from(this.ipfs.cat(new _cids.default(hash), {
+        timeout: 30000,
+        signal: controller.signal
+      }));
 
-          if (name === 'startArray') {
-            arrayDepth += 1;
+      const parser = (0, _Parser.parser)();
+      const streamArray = (0, _StreamArray.streamArray)();
+      const pipeline = stream.pipe(parser);
+      let arrayDepth = 0;
+      let streamState = 0;
+      let insertions = [];
+      let deletions = [];
+      streamArray.on('data', ({
+        value
+      }) => {
+        if (streamState === 1) {
+          insertions.push(value);
+        } else if (streamState === 3) {
+          deletions.push(value);
+        }
 
-            if (arrayDepth === 2) {
-              streamState += 1;
-            }
-          }
+        if (insertions.length + deletions.length < 1000) {
+          return;
+        }
 
-          if (streamState === 1 || streamState === 3) {
-            streamArray.write(data);
-          }
-
-          if (name === 'endArray') {
-            if (arrayDepth === 2) {
-              streamState += 1;
-            }
-
-            arrayDepth -= 1;
-          }
-        });
+        const i = insertions;
+        const d = deletions;
+        insertions = [];
+        deletions = [];
+        this.processSigned([i, d], true);
       });
-    } catch (error) {
-      if (error.type !== 'aborted' && this.active) {
-        this.emit('error', error);
+
+      try {
+        await new Promise((resolve, reject) => {
+          stream.on('error', error => {
+            reject(error);
+          });
+          streamArray.on('error', error => {
+            reject(error);
+          });
+          pipeline.on('error', error => {
+            reject(error);
+          });
+          pipeline.on('end', () => {
+            resolve();
+          });
+          pipeline.on('data', data => {
+            const {
+              name
+            } = data;
+
+            if (name === 'startArray') {
+              arrayDepth += 1;
+
+              if (arrayDepth === 2) {
+                streamState += 1;
+              }
+            }
+
+            if (streamState === 1 || streamState === 3) {
+              streamArray.write(data);
+            }
+
+            if (name === 'endArray') {
+              if (arrayDepth === 2) {
+                streamState += 1;
+              }
+
+              arrayDepth -= 1;
+            }
+          });
+        });
+      } catch (error) {
+        if (error.type !== 'aborted' && this.active) {
+          this.emit('error', error);
+        }
+
+        return;
+      } finally {
+        stream.destroy();
       }
 
-      return;
+      this.processSigned([insertions, deletions]);
+      await this.signedProcessQueue.onIdle();
+    } finally {
+      cleanup();
     }
-
-    stream.destroy();
-    this.processSigned([insertions, deletions]);
-    await this.signedProcessQueue.onIdle();
   }
 
 }
