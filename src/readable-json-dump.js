@@ -7,6 +7,12 @@ const OPEN_BUFFER = Buffer.from('["');
 const MID_BUFFER = Buffer.from('",');
 const CLOSE_BUFFER = Buffer.from(']');
 const COMMA_BUFFER = Buffer.from(',');
+const QUOTE_BUFFER = Buffer.from('"');
+
+// Escape only the characters that are invalid in JSON strings: backslash and quote
+function escapeJsonString(str: string): string {
+  return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
 
 type LevelDBIterator = {next: ((Error | void, Buffer | void, Buffer | void) => void) => void, end: ((Error | void) => void) => void};
 
@@ -92,12 +98,16 @@ export default class ReadableJsonDump extends Readable {
               continue;
             }
           }
+          // Convert key buffer to string and escape backslashes and quotes
+          const keyStr = key.slice(this.namespaceLength).toString('utf8');
+          const escapedKey = Buffer.from(escapeJsonString(keyStr));
+
           let buffer;
           if (this.skipInsertionComma) {
             this.skipInsertionComma = false;
-            buffer = Buffer.concat([OPEN_BUFFER, key.slice(this.namespaceLength), MID_BUFFER, pair, CLOSE_BUFFER]);
+            buffer = Buffer.concat([OPEN_BUFFER, escapedKey, MID_BUFFER, pair, CLOSE_BUFFER]);
           } else {
-            buffer = Buffer.concat([COMMA_BUFFER, OPEN_BUFFER, key.slice(this.namespaceLength), MID_BUFFER, pair, CLOSE_BUFFER]);
+            buffer = Buffer.concat([COMMA_BUFFER, OPEN_BUFFER, escapedKey, MID_BUFFER, pair, CLOSE_BUFFER]);
           }
           const shouldKeepPushing = this.push(buffer);
           if (!shouldKeepPushing) {
@@ -130,13 +140,18 @@ export default class ReadableJsonDump extends Readable {
               continue;
             }
           }
-          const slicedId = id.slice(this.namespaceLength);
+          // Convert buffers to strings and escape backslashes and quotes
+          const idStr = id.slice(this.namespaceLength).toString('utf8');
+          const keyStr = key.toString('utf8');
+          const escapedId = Buffer.from(escapeJsonString(idStr));
+          const escapedKey = Buffer.from(escapeJsonString(keyStr));
+
           let buffer;
           if (this.skipDeletionComma) {
             this.skipDeletionComma = false;
-            buffer = Buffer.concat([OPEN_BUFFER, slicedId, MID_BUFFER, key, CLOSE_BUFFER]);
+            buffer = Buffer.concat([OPEN_BUFFER, escapedId, MID_BUFFER, QUOTE_BUFFER, escapedKey, QUOTE_BUFFER, CLOSE_BUFFER]);
           } else {
-            buffer = Buffer.concat([COMMA_BUFFER, OPEN_BUFFER, slicedId, MID_BUFFER, key, CLOSE_BUFFER]);
+            buffer = Buffer.concat([COMMA_BUFFER, OPEN_BUFFER, escapedId, MID_BUFFER, QUOTE_BUFFER, escapedKey, QUOTE_BUFFER, CLOSE_BUFFER]);
           }
           const shouldKeepPushing = this.push(buffer);
           if (!shouldKeepPushing) {
