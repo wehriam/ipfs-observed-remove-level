@@ -9,9 +9,25 @@ const CLOSE_BUFFER = Buffer.from(']');
 const COMMA_BUFFER = Buffer.from(',');
 const QUOTE_BUFFER = Buffer.from('"');
 
-// Escape only the characters that are invalid in JSON strings: backslash and quote
+// Escape all characters that are invalid in JSON strings per JSON spec
 function escapeJsonString(str: string): string {
-  return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/[\\"\b\f\n\r\t\u0000-\u001f]/g, (char) => {
+    switch (char) {
+      case '\\': return '\\\\';
+      case '"': return '\\"';
+      case '\b': return '\\b';
+      case '\f': return '\\f';
+      case '\n': return '\\n';
+      case '\r': return '\\r';
+      case '\t': return '\\t';
+      default: {
+        // Other control characters (U+0000 to U+001F)
+        const hex = char.charCodeAt(0).toString(16).padStart(4, '0');
+        return `\\u${hex}`;
+      }
+    }
+  });
 }
 
 type LevelDBIterator = {next: ((Error | void, Buffer | void, Buffer | void) => void) => void, end: ((Error | void) => void) => void};

@@ -712,6 +712,8 @@ export default class IpfsObservedRemoveMap extends ObservedRemoveMap {
     let streamState = 0;
     let insertions = [];
     let deletions = [];
+    const recentChunks = [];
+    const MAX_CHUNK_HISTORY = 5;
     streamArray.on('data', ({
       value
     }) => {
@@ -734,6 +736,14 @@ export default class IpfsObservedRemoveMap extends ObservedRemoveMap {
 
     try {
       await new Promise((resolve, reject) => {
+        stream.on('data', chunk => {
+          // Track recent raw chunks for error reporting
+          recentChunks.push(chunk);
+
+          if (recentChunks.length > MAX_CHUNK_HISTORY) {
+            recentChunks.shift();
+          }
+        });
         stream.on('error', error => {
           reject(error);
         });
@@ -741,7 +751,25 @@ export default class IpfsObservedRemoveMap extends ObservedRemoveMap {
           reject(error);
         });
         pipeline.on('error', error => {
-          reject(error);
+          // Enhance error message with the problematic chunk
+          let enhancedMessage = error.message;
+
+          if (recentChunks.length > 0) {
+            // Concatenate recent chunks and show the problematic section
+            const combinedChunks = Buffer.concat(recentChunks);
+            const chunkStr = combinedChunks.toString('utf8'); // Show last 200 characters to give context
+
+            const contextLength = Math.min(200, chunkStr.length);
+            const context = chunkStr.slice(-contextLength);
+            enhancedMessage += `\nProblematic chunk (last ${contextLength} chars): ${JSON.stringify(context)}`;
+          }
+
+          const enhancedError = new Error(enhancedMessage);
+          enhancedError.stack = error.stack; // Emit warning but continue processing what we successfully parsed
+
+          this.emit('warning', enhancedError); // Resolve instead of reject to continue processing
+
+          resolve();
         });
         pipeline.on('end', () => {
           resolve();
