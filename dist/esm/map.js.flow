@@ -79,20 +79,25 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
       autoDestroy: false,
       maxChunkSize: 1024 * 512,
     });
-    this.serializeTransform.on('data', async (messageSlice) => {
+    this.serializeTransform.on('data', (messageSlice) => {
       if (!this.active) {
         return;
       }
-      const { controller, cleanup } = this.createLinkedAbortController();
-      try {
-        await this.ipfs.pubsub.publish(this.topic, messageSlice, { signal: controller.signal });
-      } catch (error) {
-        if (error.type !== 'aborted') {
-          this.emit('error', error);
+      this.publishQueue.add(async () => {
+        if (!this.active) {
+          return;
         }
-      } finally {
-        cleanup();
-      }
+        const { controller, cleanup } = this.createLinkedAbortController();
+        try {
+          await this.ipfs.pubsub.publish(this.topic, messageSlice, { signal: controller.signal });
+        } catch (error) {
+          if (error.type !== 'aborted') {
+            this.emit('error', error);
+          }
+        } finally {
+          cleanup();
+        }
+      });
     });
     this.serializeTransform.on('error', (error) => {
       this.emit('error', error);
@@ -104,15 +109,19 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
     this.deserializeTransform.on('error', (error) => {
       this.emit('error', error);
     });
-    this.deserializeTransform.on('data', async (message) => {
-      try {
-        const queue = JSON.parse(message.toString('utf8'));
-        await this.process(queue);
-      } catch (error) {
-        this.emit('error', error);
-      }
+    this.deserializeTransform.on('data', (message) => {
+      this.inboundQueue.add(async () => {
+        try {
+          const queue = JSON.parse(message.toString('utf8'));
+          await this.process(queue);
+        } catch (error) {
+          this.emit('error', error);
+        }
+      });
     });
-    this.hashLoadQueue = new PQueue({});
+    this.hashLoadQueue = new PQueue({ concurrency: 2 });
+    this.publishQueue = new PQueue({ concurrency: 1 });
+    this.inboundQueue = new PQueue({ concurrency: 1 });
     this.hashLoadQueue.on('idle', async () => {
       if (this.hasNewPeers && this.active) {
         this.debouncedIpfsSync();
@@ -135,7 +144,7 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
   declare active: boolean;
   declare ipfsId: string;
   declare disableSync: boolean;
-  declare boundHandleQueueMessage: (message:{from:string, data:Buffer}) => Promise<void>;
+  declare boundHandleQueueMessage: (message:{from:string, data:Buffer}) => void;
   declare boundHandleHashMessage: (message:{from:string, data:Buffer}) => Promise<void>;
   declare db: Object;
   declare ipfsHashes: Array<string> | void;
@@ -149,6 +158,8 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
   declare serializeTransform: SerializeTransform;
   declare deserializeTransform: DeserializeTransform;
   declare hashLoadQueue: PQueue;
+  declare publishQueue: PQueue;
+  declare inboundQueue: PQueue;
 
   /**
    * Create a per-operation abort controller linked to the main abort controller.
@@ -183,26 +194,30 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
       }
       return;
     }
-    this.on('publish', async (queue) => {
+    this.on('publish', (queue) => {
       if (!this.active) {
         return;
       }
-      if (this.chunkPubSub) {
-        const message = Buffer.from(JSON.stringify(queue));
-        this.serializeTransform.write(message);
-      } else {
-        const { controller, cleanup } = this.createLinkedAbortController();
-        try {
-          const message = Buffer.from(JSON.stringify(queue));
-          await this.ipfs.pubsub.publish(this.topic, message, { signal: controller.signal });
-        } catch (error) {
-          if (error.type !== 'aborted') {
-            this.emit('error', error);
-          }
-        } finally {
-          cleanup();
+      this.publishQueue.add(async () => {
+        if (!this.active) {
+          return;
         }
-      }
+        const message = Buffer.from(JSON.stringify(queue));
+        if (this.chunkPubSub) {
+          this.serializeTransform.write(message);
+        } else {
+          const { controller, cleanup } = this.createLinkedAbortController();
+          try {
+            await this.ipfs.pubsub.publish(this.topic, message, { signal: controller.signal });
+          } catch (error) {
+            if (error.type !== 'aborted') {
+              this.emit('error', error);
+            }
+          } finally {
+            cleanup();
+          }
+        }
+      });
     });
     try {
       await this.ipfs.pubsub.subscribe(this.topic, this.boundHandleQueueMessage, { signal: this.abortController.signal });
@@ -535,6 +550,8 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
         }
       }
     }
+    await this.publishQueue.onIdle();
+    await this.inboundQueue.onIdle();
     await this.hashLoadQueue.onIdle();
     this.abortController.abort();
     this.abortController = new AbortController();
@@ -544,7 +561,7 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
     await super.shutdown();
   }
 
-  async handleQueueMessage(message:{from:string, data:Buffer}) {
+  handleQueueMessage(message:{from:string, data:Buffer}) {
     if (message.from === this.ipfsId) {
       return;
     }
@@ -554,12 +571,14 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
     if (this.chunkPubSub) {
       this.deserializeTransform.write(message.data);
     } else {
-      try {
-        const queue = JSON.parse(Buffer.from(message.data).toString('utf8'));
-        await this.process(queue);
-      } catch (error) {
-        this.emit('error', error);
-      }
+      this.inboundQueue.add(async () => {
+        try {
+          const queue = JSON.parse(Buffer.from(message.data).toString('utf8'));
+          await this.process(queue);
+        } catch (error) {
+          this.emit('error', error);
+        }
+      });
     }
   }
 
@@ -585,7 +604,6 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
       this.emit('error', error);
     }
   }
-
   async loadIpfsHash(hash:string) {
     // $FlowFixMe
     const stream = Readable.from(this.ipfs.cat(new CID(hash), { timeout: 120000 }));
@@ -611,7 +629,9 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
       const d = deletions;
       insertions = [];
       deletions = [];
-      this.process([i, d], true);
+      this.inboundQueue.add(async () => {
+        await this.process([i, d], true);
+      });
     });
     try {
       await new Promise((resolve, reject) => {
@@ -678,7 +698,9 @@ export default class IpfsObservedRemoveMap<V> extends ObservedRemoveMap<V> { // 
       return;
     }
     stream.destroy();
-    this.process([insertions, deletions]);
-    await this.processQueue.onIdle();
+    await this.inboundQueue.add(async () => {
+      await this.process([insertions, deletions]);
+    });
+    await this.inboundQueue.onIdle();
   }
 }
