@@ -13,6 +13,8 @@ var _cids = _interopRequireDefault(require("cids"));
 
 var _StreamArray = require("stream-json/streamers/StreamArray");
 
+var _events = require("events");
+
 var _farmhash = require("farmhash");
 
 var _pQueue = _interopRequireDefault(require("p-queue"));
@@ -29,6 +31,7 @@ var _readableJsonDump = _interopRequireDefault(require("./readable-json-dump"));
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
+// $FlowFixMe - setMaxListeners is available in Node.js 15.4+
 const notSubscribedRegex = /Not subscribed/;
 const OPEN_BUFFER = Buffer.from('["');
 const MID_BUFFER = Buffer.from('",');
@@ -59,6 +62,7 @@ class IpfsObservedRemoveMap extends _map.default {
     this.db = db;
     this.ipfs = ipfs;
     this.abortController = new AbortController();
+    (0, _events.setMaxListeners)(1000, this.abortController.signal);
     this.topic = topic;
     this.active = true;
     this.disableSync = !!options.disableSync;
@@ -748,44 +752,50 @@ class IpfsObservedRemoveMap extends _map.default {
   }
 
   async loadIpfsHash(hash) {
-    // $FlowFixMe
-    const stream = _stream.Readable.from(this.ipfs.cat(new _cids.default(hash), {
-      timeout: 120000
-    }));
-
-    const parser = (0, _Parser.parser)();
-    const streamArray = (0, _StreamArray.streamArray)();
-    const pipeline = stream.pipe(parser);
-    let arrayDepth = 0;
-    let streamState = 0;
-    let insertions = [];
-    let deletions = [];
-    const recentChunks = [];
-    const MAX_CHUNK_HISTORY = 5;
-    streamArray.on('data', ({
-      value
-    }) => {
-      if (streamState === 1) {
-        insertions.push(value);
-      } else if (streamState === 3) {
-        deletions.push(value);
-      }
-
-      if (insertions.length + deletions.length < 1000) {
-        return;
-      }
-
-      const i = insertions;
-      const d = deletions;
-      insertions = [];
-      deletions = [];
-      this.inboundQueue.add(async () => {
-        await this.process([i, d], true);
-      });
-    });
+    const {
+      controller,
+      cleanup
+    } = this.createLinkedAbortController();
+    let stream;
 
     try {
+      // $FlowFixMe
+      stream = _stream.Readable.from(this.ipfs.cat(new _cids.default(hash), {
+        timeout: 120000,
+        signal: controller.signal
+      }));
+      const parser = (0, _Parser.parser)();
+      const streamArray = (0, _StreamArray.streamArray)();
+      const pipeline = stream.pipe(parser);
+      let arrayDepth = 0;
+      let streamState = 0;
+      let insertions = [];
+      let deletions = [];
+      const recentChunks = [];
+      const MAX_CHUNK_HISTORY = 5;
+      streamArray.on('data', ({
+        value
+      }) => {
+        if (streamState === 1) {
+          insertions.push(value);
+        } else if (streamState === 3) {
+          deletions.push(value);
+        }
+
+        if (insertions.length + deletions.length < 1000) {
+          return;
+        }
+
+        const i = insertions;
+        const d = deletions;
+        insertions = [];
+        deletions = [];
+        this.inboundQueue.add(async () => {
+          await this.process([i, d], true);
+        });
+      });
       await new Promise((resolve, reject) => {
+        // $FlowFixMe - stream is always initialized before this Promise is created
         stream.on('data', chunk => {
           // Track recent raw chunks for error reporting
           recentChunks.push(chunk);
@@ -793,7 +803,8 @@ class IpfsObservedRemoveMap extends _map.default {
           if (recentChunks.length > MAX_CHUNK_HISTORY) {
             recentChunks.shift();
           }
-        });
+        }); // $FlowFixMe - stream is always initialized before this Promise is created
+
         stream.on('error', error => {
           reject(error);
         });
@@ -850,19 +861,21 @@ class IpfsObservedRemoveMap extends _map.default {
           }
         });
       });
+      await this.inboundQueue.add(async () => {
+        await this.process([insertions, deletions]);
+      });
+      await this.inboundQueue.onIdle();
     } catch (error) {
-      if (error.type !== 'aborted') {
+      if (error.type !== 'aborted' && this.active) {
         this.emit('error', error);
       }
+    } finally {
+      if (stream) {
+        stream.destroy();
+      }
 
-      return;
+      cleanup();
     }
-
-    stream.destroy();
-    await this.inboundQueue.add(async () => {
-      await this.process([insertions, deletions]);
-    });
-    await this.inboundQueue.onIdle();
   }
 
 }

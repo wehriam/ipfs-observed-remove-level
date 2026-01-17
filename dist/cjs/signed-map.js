@@ -21,8 +21,11 @@ var _debounce = _interopRequireDefault(require("lodash/debounce"));
 
 var _stream = require("stream");
 
+var _events = require("events");
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
+// $FlowFixMe - setMaxListeners is available in Node.js 15.4+
 const {
   SerializeTransform,
   DeserializeTransform
@@ -54,6 +57,7 @@ class IpfsSignedObservedRemoveMap extends _signedMap.default {
     this.db = db;
     this.ipfs = ipfs;
     this.abortController = new AbortController();
+    (0, _events.setMaxListeners)(1000, this.abortController.signal);
     this.topic = topic;
     this.active = true;
     this.disableSync = !!options.disableSync;

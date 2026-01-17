@@ -5,7 +5,9 @@ import { streamArray as jsonStreamArray } from 'stream-json/streamers/StreamArra
 import PQueue from 'p-queue';
 import LruCache from 'lru-cache';
 import debounce from 'lodash/debounce';
-import { Readable } from 'stream';
+import { Readable } from 'stream'; // $FlowFixMe - setMaxListeners is available in Node.js 15.4+
+
+import { setMaxListeners } from 'events';
 
 const {
   SerializeTransform,
@@ -37,6 +39,7 @@ export default class IpfsSignedObservedRemoveMap extends SignedObservedRemoveMap
     this.db = db;
     this.ipfs = ipfs;
     this.abortController = new AbortController();
+    setMaxListeners(1000, this.abortController.signal);
     this.topic = topic;
     this.active = true;
     this.disableSync = !!options.disableSync;
